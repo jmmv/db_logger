@@ -15,8 +15,8 @@
 
 //! Implementation of the database abstraction using PostgreSQL.
 
-use crate::db::*;
-use crate::Connection;
+use crate::logger::LogEntry;
+use crate::{truncate_option_str, Connection, Db, DbError, DbResult, Tx};
 use futures::TryStreamExt;
 use sqlx::postgres::{PgConnectOptions, PgDatabaseError, PgPool, Postgres};
 use sqlx::{Row, Transaction};
@@ -26,7 +26,7 @@ use std::sync::Arc;
 use time::OffsetDateTime;
 
 /// Schema to use to initialize the test database.
-const SCHEMA: &str = include_str!("../../schemas/pgsql.sql");
+const SCHEMA: &str = include_str!("../schemas/pgsql.sql");
 
 // Maximum sizes of the corresponding fields in the schema.
 pub(crate) const LOG_ENTRY_MAX_HOSTNAME_LENGTH: usize = 64;
@@ -62,6 +62,17 @@ fn map_sqlx_error(e: sqlx::Error) -> DbError {
         },
         e => DbError::BackendError(e.to_string()),
     }
+}
+
+/// Converts an `u32` from the in-memory model to an `i16` suitable for storage.
+fn u32_to_i16(field: &'static str, unsigned: u32) -> DbResult<i16> {
+    if unsigned > i16::MAX as u32 {
+        return Err(DbError::BackendError(format!(
+            "{} ({}) is too large for i16",
+            field, unsigned
+        )));
+    }
+    Ok(unsigned as i16)
 }
 
 /// A database instance backed by a PostgreSQL database.
@@ -327,7 +338,7 @@ impl<'a> Tx<'a> for PostgresTx<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::testutils;
+    use crate::testutils;
 
     /// Test context to allow automatic cleanup of the test database.
     struct PostgresTestContext {

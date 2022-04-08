@@ -21,8 +21,7 @@
 //! `stderr`.
 
 use crate::clocks::{Clock, SystemClock};
-use crate::db::{Db, DbResult};
-use crate::Connection;
+use crate::{Connection, Db, DbResult};
 use gethostname::gethostname;
 use log::{Level, Log, Metadata, Record};
 use std::env;
@@ -349,7 +348,7 @@ mod tests {
 
     use super::*;
     use crate::clocks::MonotonicClock;
-    use crate::db::sqlite;
+    use crate::sqlite;
     use log::RecordBuilder;
 
     /// Sets up the logger backing it with an in-memory database and a fake clock.
