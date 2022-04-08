@@ -19,7 +19,6 @@ log = "0.4"
 rand = "0.8"
 regex = "1"
 time = "0.2.16"
-thiserror = "1.0"
 tokio = "1"
 
 [dependencies.sqlx]

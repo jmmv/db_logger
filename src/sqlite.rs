@@ -20,7 +20,7 @@ use crate::pgsql::{
     LOG_ENTRY_MAX_FILENAME_LENGTH, LOG_ENTRY_MAX_HOSTNAME_LENGTH, LOG_ENTRY_MAX_MESSAGE_LENGTH,
     LOG_ENTRY_MAX_MODULE_LENGTH,
 };
-use crate::{truncate_option_str, Connection, Db, DbError, DbResult, Tx};
+use crate::{truncate_option_str, Connection, Db, Result, Tx};
 use futures::TryStreamExt;
 use sqlx::sqlite::{Sqlite, SqlitePool};
 use sqlx::{Row, Transaction};
@@ -33,27 +33,14 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 const SCHEMA: &str = include_str!("../schemas/sqlite.sql");
 
 /// Factory to connect to and initialize an in-memory SQLite test database.
-pub async fn setup_test() -> DbResult<Connection> {
+pub async fn setup_test() -> Result<Connection> {
     InMemoryDb::connect().await.map(|db| Connection(Arc::from(db)))
 }
 
-/// Takes a raw SQLx error `e` and converts it to our generic error type.
-fn map_sqlx_error(e: sqlx::Error) -> DbError {
-    match e {
-        sqlx::Error::RowNotFound => DbError::NotFound,
-        e if e.to_string().contains("FOREIGN KEY constraint failed") => DbError::NotFound,
-        e if e.to_string().contains("UNIQUE constraint failed") => DbError::AlreadyExists,
-        e => DbError::BackendError(e.to_string()),
-    }
-}
-
 /// Converts an `u64` from the in-memory model to an `i64` suitable for storage.
-fn u64_to_i64(field: &'static str, unsigned: u64) -> DbResult<i64> {
+fn u64_to_i64(field: &'static str, unsigned: u64) -> Result<i64> {
     if unsigned > i64::MAX as u64 {
-        return Err(DbError::BackendError(format!(
-            "{} ({}) is too large for i64",
-            field, unsigned
-        )));
+        return Err(format!("{} ({}) is too large for i64", field, unsigned));
     }
     Ok(unsigned as i64)
 }
@@ -86,8 +73,8 @@ struct InMemoryDb {
 
 impl InMemoryDb {
     /// Creates a new connection based on environment variables and initializes its schema.
-    async fn connect() -> DbResult<Self> {
-        let pool = SqlitePool::connect(":memory:").await.map_err(map_sqlx_error)?;
+    async fn connect() -> Result<Self> {
+        let pool = SqlitePool::connect(":memory:").await.map_err(|e| e.to_string())?;
 
         let mut tx = pool.begin().await.unwrap();
         {
@@ -110,9 +97,9 @@ impl InMemoryDb {
 
 #[async_trait::async_trait]
 impl Db for InMemoryDb {
-    async fn begin<'a>(&'a self) -> DbResult<Box<dyn Tx<'a> + 'a + Send>> {
+    async fn begin<'a>(&'a self) -> Result<Box<dyn Tx<'a> + 'a + Send>> {
         let permit = self.sem.clone().acquire_owned().await.expect("Semaphore prematurely closed");
-        let tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        let tx = self.pool.begin().await.map_err(|e| e.to_string())?;
         Ok(Box::from(InMemoryTx { tx, _permit: permit, log_sequence: self.log_sequence.clone() }))
     }
 }
@@ -126,24 +113,24 @@ struct InMemoryTx<'a> {
 
 #[async_trait::async_trait]
 impl<'a> Tx<'a> for InMemoryTx<'a> {
-    async fn commit(self: Box<Self>) -> DbResult<()> {
-        self.tx.commit().await.map_err(map_sqlx_error)?;
+    async fn commit(self: Box<Self>) -> Result<()> {
+        self.tx.commit().await.map_err(|e| e.to_string())?;
         Ok(())
     }
 
-    async fn get_log_entries(&mut self) -> DbResult<Vec<String>> {
+    async fn get_log_entries(&mut self) -> Result<Vec<String>> {
         let query_str = "SELECT * FROM logs ORDER BY timestamp_secs, timestamp_nsecs, sequence";
         let mut rows = sqlx::query(query_str).fetch(&mut self.tx);
         let mut entries = vec![];
-        while let Some(row) = rows.try_next().await.map_err(map_sqlx_error)? {
-            let timestamp_secs: i64 = row.try_get("timestamp_secs").map_err(map_sqlx_error)?;
-            let timestamp_nsecs: i64 = row.try_get("timestamp_nsecs").map_err(map_sqlx_error)?;
-            let hostname: String = row.try_get("hostname").map_err(map_sqlx_error)?;
-            let level: i8 = row.try_get("level").map_err(map_sqlx_error)?;
-            let module: Option<String> = row.try_get("module").map_err(map_sqlx_error)?;
-            let filename: Option<String> = row.try_get("filename").map_err(map_sqlx_error)?;
-            let line: Option<i16> = row.try_get("line").map_err(map_sqlx_error)?;
-            let message: String = row.try_get("message").map_err(map_sqlx_error)?;
+        while let Some(row) = rows.try_next().await.map_err(|e| e.to_string())? {
+            let timestamp_secs: i64 = row.try_get("timestamp_secs").map_err(|e| e.to_string())?;
+            let timestamp_nsecs: i64 = row.try_get("timestamp_nsecs").map_err(|e| e.to_string())?;
+            let hostname: String = row.try_get("hostname").map_err(|e| e.to_string())?;
+            let level: i8 = row.try_get("level").map_err(|e| e.to_string())?;
+            let module: Option<String> = row.try_get("module").map_err(|e| e.to_string())?;
+            let filename: Option<String> = row.try_get("filename").map_err(|e| e.to_string())?;
+            let line: Option<i16> = row.try_get("line").map_err(|e| e.to_string())?;
+            let message: String = row.try_get("message").map_err(|e| e.to_string())?;
 
             entries.push(format!(
                 "{}.{} {} {} {} {}:{} {}",
@@ -160,7 +147,7 @@ impl<'a> Tx<'a> for InMemoryTx<'a> {
         Ok(entries)
     }
 
-    async fn put_log_entries(&mut self, entries: Vec<LogEntry<'_, '_>>) -> DbResult<()> {
+    async fn put_log_entries(&mut self, entries: Vec<LogEntry<'_, '_>>) -> Result<()> {
         let mut sequence = self.log_sequence.fetch_add(entries.len() as u64, Ordering::SeqCst);
 
         let query_str = "
@@ -193,9 +180,9 @@ impl<'a> Tx<'a> for InMemoryTx<'a> {
                 .bind(entry.message)
                 .execute(&mut self.tx)
                 .await
-                .map_err(map_sqlx_error)?;
+                .map_err(|e| e.to_string())?;
             if done.rows_affected() != 1 {
-                return Err(DbError::BackendError("Insertion didn't create one row".to_owned()));
+                return Err("Insertion didn't create one row".to_owned());
             }
 
             sequence += 1;
