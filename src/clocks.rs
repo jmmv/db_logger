@@ -18,8 +18,6 @@
 #[cfg(test)]
 use std::sync::atomic::{AtomicU64, Ordering};
 use time::OffsetDateTime;
-#[cfg(test)]
-use time::{Date, Time};
 
 /// Generic definition of a clock.
 pub(crate) trait Clock {
@@ -66,22 +64,6 @@ impl Clock for MonotonicClock {
     }
 }
 
-/// Creates an `OffsetDateTime` with the given values, assuming UTC.
-#[cfg(test)]
-pub(crate) fn utc_datetime(
-    year: i32,
-    month: u8,
-    day: u8,
-    hour: u8,
-    minute: u8,
-    second: u8,
-) -> OffsetDateTime {
-    Date::try_from_ymd(year, month, day)
-        .expect("Hardcoded dates must be valid")
-        .with_time(Time::try_from_hms(hour, minute, second).expect("Hardcoded times must be valid"))
-        .assume_utc()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,13 +91,5 @@ mod tests {
         assert_eq!(OffsetDateTime::from_unix_timestamp(123), clock.now_utc());
         assert_eq!(OffsetDateTime::from_unix_timestamp(124), clock.now_utc());
         assert_eq!(OffsetDateTime::from_unix_timestamp(125), clock.now_utc());
-    }
-
-    #[test]
-    fn test_utc_datetime() {
-        assert_eq!(
-            OffsetDateTime::parse("2022-01-18 17:45:02 +0000", "%F %T %z").unwrap(),
-            utc_datetime(2022, 1, 18, 17, 45, 2)
-        );
     }
 }
