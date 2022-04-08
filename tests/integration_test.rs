@@ -23,7 +23,7 @@
 //! initialize it once here, which in turn limits the granularity of our tests.  We can only have
 //! a single `#[test]` to wrap the whole code in this file
 
-use db_logger::{DbLogger, Handle, PostgresDb, SystemClock};
+use db_logger::{DbLogger, Handle, PostgresDb};
 use gethostname::gethostname;
 use log::*;
 use std::env;
@@ -175,7 +175,7 @@ fn test_everything() {
     #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
     async fn run_tests(db: Arc<PostgresDb>) {
         env::set_var("RUST_LOG", "trace");
-        let handle = DbLogger::init(db.clone(), Arc::from(SystemClock::default()));
+        let handle = DbLogger::init(db.clone());
 
         let mut logs_accumulator = vec![];
 

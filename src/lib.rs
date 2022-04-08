@@ -21,10 +21,9 @@
 #![warn(unused, unused_extern_crates, unused_import_braces, unused_qualifications)]
 #![warn(unsafe_code)]
 
-pub(crate) mod clocks;
+mod clocks;
 pub(crate) mod db;
 pub(crate) mod logger;
 
-pub use clocks::SystemClock;
 pub use db::{Db, PostgresDb};
 pub use logger::{DbLogger, Handle};
