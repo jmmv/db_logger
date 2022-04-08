@@ -67,7 +67,7 @@ fn unpack_timestamp(ts: OffsetDateTime) -> (i64, i64) {
 
 /// A database instance backed by an in-memory SQLite database.
 #[derive(Clone)]
-pub struct InMemoryDb {
+struct InMemoryDb {
     pool: SqlitePool,
     sem: Arc<Semaphore>,
     log_sequence: Arc<AtomicU64>,
@@ -75,7 +75,7 @@ pub struct InMemoryDb {
 
 impl InMemoryDb {
     /// Creates a new connection based on environment variables and initializes its schema.
-    pub async fn connect() -> DbResult<Self> {
+    async fn connect() -> DbResult<Self> {
         let pool = SqlitePool::connect(":memory:").await.map_err(map_sqlx_error)?;
 
         let mut tx = pool.begin().await.unwrap();
@@ -107,7 +107,7 @@ impl Db for InMemoryDb {
 }
 
 /// A transaction backed by a SQLite database.
-pub(crate) struct InMemoryTx<'a> {
+struct InMemoryTx<'a> {
     tx: Transaction<'a, Sqlite>,
     _permit: OwnedSemaphorePermit,
     log_sequence: Arc<AtomicU64>,

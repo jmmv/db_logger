@@ -66,7 +66,7 @@ fn map_sqlx_error(e: sqlx::Error) -> DbError {
 
 /// A database instance backed by a PostgreSQL database.
 #[derive(Clone)]
-pub struct PostgresDb {
+struct PostgresDb {
     pool: PgPool,
     suffix: Option<u32>,
     log_sequence: Arc<AtomicU32>,
@@ -74,13 +74,7 @@ pub struct PostgresDb {
 
 impl PostgresDb {
     /// Creates a new connection based on environment variables.
-    pub fn connect_lazy(
-        host: &str,
-        port: u16,
-        database: &str,
-        username: &str,
-        password: &str,
-    ) -> Self {
+    fn connect_lazy(host: &str, port: u16, database: &str, username: &str, password: &str) -> Self {
         let options = PgConnectOptions::new()
             .host(host)
             .port(port)
@@ -143,7 +137,7 @@ impl PostgresTestDb {
     /// be async but the `Drop` trait is not.
     ///
     /// As this is only for testing, any errors result in a panic.
-    pub async fn setup_test() -> Self {
+    async fn setup_test() -> Self {
         let mut db = PostgresDb::connect_lazy(
             &env::var("PGSQL_TEST_HOST").unwrap(),
             env::var("PGSQL_TEST_PORT").unwrap().parse::<u16>().unwrap(),
@@ -176,7 +170,7 @@ impl PostgresTestDb {
     ///
     /// As this is only for testing, any errors result in a panic.  Attempting to use the database
     /// after this has been called has undefined behavior.
-    pub async fn teardown_test(&self) {
+    async fn teardown_test(&self) {
         let suffix = self.0.suffix.expect("This should only be called from tests");
 
         // Do not use patch_query here: we must make sure the fake names cannot possibly match the
@@ -213,7 +207,7 @@ impl Db for PostgresTestDb {
 }
 
 /// A transaction backed by a PostgreSQL database.
-pub(crate) struct PostgresTx<'a> {
+struct PostgresTx<'a> {
     db: &'a PostgresDb,
     tx: Transaction<'a, Postgres>,
     log_sequence: Arc<AtomicU32>,

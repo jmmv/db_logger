@@ -49,7 +49,7 @@ const DEFAULT_LOG_LEVEL: Level = Level::Warn;
 
 /// Contents of a log entry.
 #[derive(Debug)]
-pub struct LogEntry<'a, 'b> {
+pub(crate) struct LogEntry<'a, 'b> {
     pub(crate) timestamp: OffsetDateTime,
     pub(crate) hostname: String,
     pub(crate) level: Level,
