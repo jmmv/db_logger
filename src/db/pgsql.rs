@@ -25,7 +25,7 @@ use std::sync::Arc;
 use time::OffsetDateTime;
 
 /// Schema to use to initialize the test database.
-const SCHEMA: &str = include_str!("pgsql_schema.sql");
+const SCHEMA: &str = include_str!("../../schemas/pgsql.sql");
 
 // Maximum sizes of the corresponding fields in the schema.
 pub(crate) const LOG_ENTRY_MAX_HOSTNAME_LENGTH: usize = 64;

@@ -29,7 +29,7 @@ use time::OffsetDateTime;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 /// Schema to use to initialize the test database.
-const SCHEMA: &str = include_str!("sqlite_schema.sql");
+const SCHEMA: &str = include_str!("../../schemas/sqlite.sql");
 
 /// Takes a raw SQLx error `e` and converts it to our generic error type.
 fn map_sqlx_error(e: sqlx::Error) -> DbError {
