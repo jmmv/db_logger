@@ -32,9 +32,14 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 /// Schema to use to initialize the test database.
 const SCHEMA: &str = include_str!("../schemas/sqlite.sql");
 
-/// Factory to connect to and initialize an in-memory SQLite test database.
-pub async fn setup_test() -> Result<Connection> {
-    InMemoryDb::connect().await.map(|db| Connection(Arc::from(db)))
+/// Factory to connect to a SQLite database.
+pub async fn connect(path: &str) -> Result<Connection> {
+    SqliteDb::connect(path).await.map(|db| Connection(Arc::from(db)))
+}
+
+/// Factory to connect to and initialize a SQLite test database.
+pub async fn setup_test(uri: &str) -> Connection {
+    Connection(Arc::from(SqliteDb::setup_test(uri).await))
 }
 
 /// Converts an `u64` from the in-memory model to an `i64` suitable for storage.
@@ -63,27 +68,18 @@ fn unpack_timestamp(ts: OffsetDateTime) -> (i64, i64) {
     (sec, nsec)
 }
 
-/// A database instance backed by an in-memory SQLite database.
+/// A database instance backed by an SQLite database.
 #[derive(Clone)]
-struct InMemoryDb {
+struct SqliteDb {
     pool: SqlitePool,
     sem: Arc<Semaphore>,
     log_sequence: Arc<AtomicU64>,
 }
 
-impl InMemoryDb {
+impl SqliteDb {
     /// Creates a new connection based on environment variables and initializes its schema.
-    async fn connect() -> Result<Self> {
-        let pool = SqlitePool::connect(":memory:").await.map_err(|e| e.to_string())?;
-
-        let mut tx = pool.begin().await.unwrap();
-        {
-            let mut results = sqlx::query(SCHEMA).execute_many(&mut tx).await;
-            while results.try_next().await.unwrap().is_some() {
-                // Nothing to do.
-            }
-        }
-        tx.commit().await.unwrap();
+    async fn connect(uri: &str) -> Result<Self> {
+        let pool = SqlitePool::connect(uri).await.map_err(|e| e.to_string())?;
 
         // Serialize all transactions onto the SQLite database to avoid busy errors that we cannot
         // easily deal with during tests.
@@ -93,26 +89,40 @@ impl InMemoryDb {
 
         Ok(Self { pool, sem, log_sequence })
     }
+
+    /// Creates a new connection to test database and initializes it.
+    async fn setup_test(uri: &str) -> Self {
+        let db = SqliteDb::connect(uri).await.unwrap();
+        let mut tx = db.pool.begin().await.unwrap();
+        {
+            let mut results = sqlx::query(SCHEMA).execute_many(&mut tx).await;
+            while results.try_next().await.unwrap().is_some() {
+                // Nothing to do.
+            }
+        }
+        tx.commit().await.unwrap();
+        db
+    }
 }
 
 #[async_trait::async_trait]
-impl Db for InMemoryDb {
+impl Db for SqliteDb {
     async fn begin<'a>(&'a self) -> Result<Box<dyn Tx<'a> + 'a + Send>> {
         let permit = self.sem.clone().acquire_owned().await.expect("Semaphore prematurely closed");
         let tx = self.pool.begin().await.map_err(|e| e.to_string())?;
-        Ok(Box::from(InMemoryTx { tx, _permit: permit, log_sequence: self.log_sequence.clone() }))
+        Ok(Box::from(SqliteTx { tx, _permit: permit, log_sequence: self.log_sequence.clone() }))
     }
 }
 
 /// A transaction backed by a SQLite database.
-struct InMemoryTx<'a> {
+struct SqliteTx<'a> {
     tx: Transaction<'a, Sqlite>,
     _permit: OwnedSemaphorePermit,
     log_sequence: Arc<AtomicU64>,
 }
 
 #[async_trait::async_trait]
-impl<'a> Tx<'a> for InMemoryTx<'a> {
+impl<'a> Tx<'a> for SqliteTx<'a> {
     async fn commit(self: Box<Self>) -> Result<()> {
         self.tx.commit().await.map_err(|e| e.to_string())?;
         Ok(())
@@ -197,12 +207,12 @@ mod tests {
     use crate::testutils;
 
     /// Test context to allow automatic cleanup of the test database.
-    struct InMemoryTestContext {
-        db: InMemoryDb,
+    struct SqliteTestContext {
+        db: SqliteDb,
     }
 
     #[async_trait::async_trait]
-    impl testutils::TestContext for InMemoryTestContext {
+    impl testutils::TestContext for SqliteTestContext {
         fn db(&self) -> Box<dyn Db + Send + Sync> {
             Box::from(self.db.clone())
         }
@@ -216,27 +226,27 @@ mod tests {
     fn setup() -> Box<dyn testutils::TestContext> {
         let _can_fail = env_logger::builder().is_test(true).try_init();
 
-        let db = tokio::runtime::Runtime::new().unwrap().block_on(InMemoryDb::connect()).unwrap();
-        Box::from(InMemoryTestContext { db })
+        let db = tokio::runtime::Runtime::new().unwrap().block_on(SqliteDb::setup_test(":memory:"));
+        Box::from(SqliteTestContext { db })
     }
 
     #[test]
-    fn test_inmemorydb_log_entries_none() {
+    fn test_sqlitedb_log_entries_none() {
         testutils::test_log_entries_none(setup());
     }
 
     #[test]
-    fn test_inmemorydb_log_entries_individual() {
+    fn test_sqlitedb_log_entries_individual() {
         testutils::test_log_entries_individual(setup());
     }
 
     #[test]
-    fn test_inmemorydb_log_entries_combined() {
+    fn test_sqlitedb_log_entries_combined() {
         testutils::test_log_entries_combined(setup());
     }
 
     #[test]
-    fn test_inmemorydb_log_entries_long_strings() {
+    fn test_sqlitedb_log_entries_long_strings() {
         testutils::test_log_entries_long_strings(setup());
     }
 }

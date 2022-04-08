@@ -353,7 +353,7 @@ mod tests {
 
     /// Sets up the logger backing it with an in-memory database and a fake clock.
     async fn setup() -> (DbLogger, Connection) {
-        let db = sqlite::setup_test().await.unwrap();
+        let db = sqlite::setup_test(":memory:").await;
         let clock = Arc::from(MonotonicClock::new(1000));
         (DbLogger::new("fake-hostname".to_owned(), db.clone(), clock), db)
     }

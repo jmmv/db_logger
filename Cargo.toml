@@ -23,12 +23,9 @@ tokio = "1"
 
 [dependencies.sqlx]
 version = "0.5"
-features = ["postgres", "runtime-async-std-rustls", "time"]
+features = ["postgres", "runtime-async-std-rustls", "sqlite", "time"]
 
 [dev-dependencies]
 env_logger = "0.8"
+tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
-
-[dev-dependencies.sqlx]
-version = "0.5"
-features = ["postgres", "runtime-async-std-rustls", "sqlite", "time"]
