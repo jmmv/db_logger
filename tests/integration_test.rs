@@ -23,7 +23,7 @@
 //! initialize it once here, which in turn limits the granularity of our tests.  We can only have
 //! a single `#[test]` to wrap the whole code in this file
 
-use db_logger::{Db, DbLogger, PostgresDb, SystemClock};
+use db_logger::{DbLogger, Handle, PostgresDb, SystemClock};
 use gethostname::gethostname;
 use log::*;
 use std::env;
@@ -83,7 +83,7 @@ fn make_deterministic(lines: Vec<String>) -> Vec<String> {
     new_lines
 }
 
-async fn test_all_levels(db: &PostgresDb, exp_logs: &mut Vec<String>) {
+async fn test_all_levels(handle: &Handle, exp_logs: &mut Vec<String>) {
     log::set_max_level(Level::Trace.to_level_filter());
 
     // Testing all levels is critical to ensure any potential log messages written by the database
@@ -102,12 +102,11 @@ async fn test_all_levels(db: &PostgresDb, exp_logs: &mut Vec<String>) {
     exp_logs.push(make_log_line(4, base_line + 4, "A debug message"));
     exp_logs.push(make_log_line(5, base_line + 5, "A trace message"));
 
-    let mut tx = db.begin().await.unwrap();
-    let entries = tx.get_log_entries().await.unwrap();
+    let entries = handle.get_log_entries().await.unwrap();
     assert_eq!(exp_logs, &make_deterministic(entries));
 }
 
-async fn test_level_filtering(db: &PostgresDb, exp_logs: &mut Vec<String>) {
+async fn test_level_filtering(handle: &Handle, exp_logs: &mut Vec<String>) {
     log::set_max_level(Level::Warn.to_level_filter());
 
     // Testing all levels is critical to ensure any potential log messages written by the database
@@ -123,12 +122,11 @@ async fn test_level_filtering(db: &PostgresDb, exp_logs: &mut Vec<String>) {
     exp_logs.push(make_log_line(1, base_line + 1, "An error message"));
     exp_logs.push(make_log_line(2, base_line + 2, "A warning message"));
 
-    let mut tx = db.begin().await.unwrap();
-    let entries = tx.get_log_entries().await.unwrap();
+    let entries = handle.get_log_entries().await.unwrap();
     assert_eq!(exp_logs, &make_deterministic(entries));
 }
 
-async fn test_auto_flush(db: &PostgresDb, exp_logs: &mut Vec<String>) {
+async fn test_auto_flush(handle: &Handle, exp_logs: &mut Vec<String>) {
     log::set_max_level(Level::Info.to_level_filter());
 
     let base_line = line!();
@@ -139,8 +137,7 @@ async fn test_auto_flush(db: &PostgresDb, exp_logs: &mut Vec<String>) {
 
     let mut retries = 30;
     while retries > 0 {
-        let mut tx = db.begin().await.unwrap();
-        let entries = make_deterministic(tx.get_log_entries().await.unwrap());
+        let entries = make_deterministic(handle.get_log_entries().await.unwrap());
         if exp_logs == &entries {
             break;
         } else if retries == 0 {
@@ -152,7 +149,7 @@ async fn test_auto_flush(db: &PostgresDb, exp_logs: &mut Vec<String>) {
     }
 }
 
-async fn test_flood(db: &PostgresDb, exp_logs: &mut Vec<String>) {
+async fn test_flood(handle: &Handle, exp_logs: &mut Vec<String>) {
     log::set_max_level(Level::Info.to_level_filter());
 
     for i in 0..10240 {
@@ -162,8 +159,7 @@ async fn test_flood(db: &PostgresDb, exp_logs: &mut Vec<String>) {
     }
     log::logger().flush();
 
-    let mut tx = db.begin().await.unwrap();
-    let entries = tx.get_log_entries().await.unwrap();
+    let entries = handle.get_log_entries().await.unwrap();
     assert_eq!(exp_logs, &make_deterministic(entries));
 }
 
@@ -179,14 +175,14 @@ fn test_everything() {
     #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
     async fn run_tests(db: Arc<PostgresDb>) {
         env::set_var("RUST_LOG", "trace");
-        let _handle = DbLogger::init(db.clone(), Arc::from(SystemClock::default()));
+        let handle = DbLogger::init(db.clone(), Arc::from(SystemClock::default()));
 
         let mut logs_accumulator = vec![];
 
-        test_all_levels(&db, &mut logs_accumulator).await;
-        test_level_filtering(&db, &mut logs_accumulator).await;
-        test_auto_flush(&db, &mut logs_accumulator).await;
-        test_flood(&db, &mut logs_accumulator).await;
+        test_all_levels(&handle, &mut logs_accumulator).await;
+        test_level_filtering(&handle, &mut logs_accumulator).await;
+        test_auto_flush(&handle, &mut logs_accumulator).await;
+        test_flood(&handle, &mut logs_accumulator).await;
     }
     run_tests(context.db.clone());
 

@@ -21,7 +21,7 @@
 //! `stderr`.
 
 use crate::clocks::Clock;
-use crate::db::Db;
+use crate::db::{Db, DbResult};
 use gethostname::gethostname;
 use log::{Level, Log, Metadata, Record};
 use std::env;
@@ -205,24 +205,29 @@ fn env_rust_log() -> Level {
     }
 }
 
-/// Implementation of a database-backed logger.
-///
-/// There should only be one instance of this object, which is persisted in a global `Box` owned by
-/// the `log` crate.  As a result, this object gets never dropped.
-pub struct DbLogger {
-    hostname: String,
-    action_tx: mpsc::SyncSender<Action>,
-    done_rx: Arc<Mutex<mpsc::Receiver<()>>>,
-    clock: Arc<dyn Clock + Send + Sync + 'static>,
-}
-
 /// Handle to maintain the `DbLogger`'s backing task alive.
 ///
 /// Once this object goes out of scope, the logger's persisting logic stops and any log messages
 /// emitted afterwards are not recorded.
 pub struct Handle {
+    db: Arc<dyn Db + Send + Sync + 'static>,
     action_tx: mpsc::SyncSender<Action>,
     done_rx: Arc<Mutex<mpsc::Receiver<()>>>,
+}
+
+impl Handle {
+    /// Returns the sorted list of all log entries in the database.
+    ///
+    /// Given that this is exposed for testing purposes only, this just returns a flat textual
+    /// representation of the log entry and does not try to deserialize it as a `LogEntry`.  This
+    /// is for simplicity given that a `LogEntry` keeps references to static strings and we cannot
+    /// obtain those from the database.
+    pub async fn get_log_entries(&self) -> DbResult<Vec<String>> {
+        let mut tx = self.db.begin().await?;
+        let entries = tx.get_log_entries().await?;
+        tx.commit().await?;
+        Ok(entries)
+    }
 }
 
 impl Drop for Handle {
@@ -233,6 +238,17 @@ impl Drop for Handle {
         self.action_tx.send(Action::Stop).unwrap();
         done_rx.recv().unwrap();
     }
+}
+
+/// Implementation of a database-backed logger.
+///
+/// There should only be one instance of this object, which is persisted in a global `Box` owned by
+/// the `log` crate.  As a result, this object gets never dropped.
+pub struct DbLogger {
+    hostname: String,
+    action_tx: mpsc::SyncSender<Action>,
+    done_rx: Arc<Mutex<mpsc::Receiver<()>>>,
+    clock: Arc<dyn Clock + Send + Sync + 'static>,
 }
 
 impl DbLogger {
@@ -270,7 +286,7 @@ impl DbLogger {
 
         let logger = DbLogger::new(hostname, db.clone(), clock.clone());
         let handle =
-            Handle { action_tx: logger.action_tx.clone(), done_rx: logger.done_rx.clone() };
+            Handle { db, action_tx: logger.action_tx.clone(), done_rx: logger.done_rx.clone() };
 
         log::set_boxed_logger(Box::from(logger)).expect("Logger should not have been set up yet");
         log::set_max_level(max_level.to_level_filter());

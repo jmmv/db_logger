@@ -27,4 +27,4 @@ pub(crate) mod logger;
 
 pub use clocks::SystemClock;
 pub use db::{Db, PostgresDb};
-pub use logger::DbLogger;
+pub use logger::{DbLogger, Handle};
