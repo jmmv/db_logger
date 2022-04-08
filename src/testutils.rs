@@ -15,12 +15,12 @@
 
 //! Common tests for any database implementation.
 
-use crate::db::pgsql::{
+use crate::logger::LogEntry;
+use crate::pgsql::{
     LOG_ENTRY_MAX_FILENAME_LENGTH, LOG_ENTRY_MAX_HOSTNAME_LENGTH, LOG_ENTRY_MAX_MESSAGE_LENGTH,
     LOG_ENTRY_MAX_MODULE_LENGTH,
 };
-use crate::db::{Db, Tx};
-use crate::logger::LogEntry;
+use crate::{Db, Tx};
 use time::OffsetDateTime;
 
 /// Context to parameterize the tests depending on the backing database.

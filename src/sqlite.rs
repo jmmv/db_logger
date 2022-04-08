@@ -15,12 +15,12 @@
 
 //! Implementation of the database abstraction using SQLite.
 
-use crate::db::pgsql::{
+use crate::logger::LogEntry;
+use crate::pgsql::{
     LOG_ENTRY_MAX_FILENAME_LENGTH, LOG_ENTRY_MAX_HOSTNAME_LENGTH, LOG_ENTRY_MAX_MESSAGE_LENGTH,
     LOG_ENTRY_MAX_MODULE_LENGTH,
 };
-use crate::db::*;
-use crate::Connection;
+use crate::{truncate_option_str, Connection, Db, DbError, DbResult, Tx};
 use futures::TryStreamExt;
 use sqlx::sqlite::{Sqlite, SqlitePool};
 use sqlx::{Row, Transaction};
@@ -30,7 +30,7 @@ use time::OffsetDateTime;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 /// Schema to use to initialize the test database.
-const SCHEMA: &str = include_str!("../../schemas/sqlite.sql");
+const SCHEMA: &str = include_str!("../schemas/sqlite.sql");
 
 /// Factory to connect to and initialize an in-memory SQLite test database.
 pub async fn setup_test() -> DbResult<Connection> {
@@ -45,6 +45,17 @@ fn map_sqlx_error(e: sqlx::Error) -> DbError {
         e if e.to_string().contains("UNIQUE constraint failed") => DbError::AlreadyExists,
         e => DbError::BackendError(e.to_string()),
     }
+}
+
+/// Converts an `u64` from the in-memory model to an `i64` suitable for storage.
+fn u64_to_i64(field: &'static str, unsigned: u64) -> DbResult<i64> {
+    if unsigned > i64::MAX as u64 {
+        return Err(DbError::BackendError(format!(
+            "{} ({}) is too large for i64",
+            field, unsigned
+        )));
+    }
+    Ok(unsigned as i64)
 }
 
 /// Converts a timestamp into the seconds and nanoseconds pair needed by the database.
@@ -196,7 +207,7 @@ impl<'a> Tx<'a> for InMemoryTx<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::testutils;
+    use crate::testutils;
 
     /// Test context to allow automatic cleanup of the test database.
     struct InMemoryTestContext {

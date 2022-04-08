@@ -24,12 +24,85 @@
 use std::sync::Arc;
 
 mod clocks;
-pub(crate) mod db;
 pub(crate) mod logger;
-
-pub use db::pgsql;
+use crate::logger::LogEntry;
+pub mod pgsql;
 pub use logger::{DbLogger, Handle};
+#[cfg(test)]
+pub(crate) mod sqlite;
+#[cfg(test)]
+mod testutils;
 
 /// Opaque type representing a connection to the logging database.
 #[derive(Clone)]
-pub struct Connection(Arc<dyn db::Db + Send + Sync + 'static>);
+pub struct Connection(Arc<dyn Db + Send + Sync + 'static>);
+
+/// Database errors.  Any unexpected errors that come from the database are classified as
+/// `BackendError`, but errors we know about have more specific types.
+#[allow(missing_docs)]
+#[derive(Debug, thiserror::Error, PartialEq)]
+pub enum DbError {
+    #[error("Already exists")]
+    AlreadyExists,
+
+    #[error("Database error: {0}")]
+    BackendError(String),
+
+    #[error("Data integrity error: {0}")]
+    DataIntegrityError(String),
+
+    #[error("Invalid request: {0}")]
+    InvalidRequest(String),
+
+    #[error("Entity not found")]
+    NotFound,
+
+    #[error("Service unavailable; back off and retry")]
+    Unavailable,
+}
+
+/// Result type for this module.
+pub(crate) type DbResult<T> = Result<T, DbError>;
+
+/// Abstraction over the database connection.
+#[async_trait::async_trait]
+pub(crate) trait Db {
+    /// Begins a transaction.
+    async fn begin<'a>(&'a self) -> DbResult<Box<dyn Tx<'a> + 'a + Send>>;
+}
+
+/// A transaction with high-level operations that deal with our types.
+#[async_trait::async_trait]
+pub(crate) trait Tx<'a> {
+    /// Commits the transaction.  The transaction is rolled back on drop unless this is called.
+    async fn commit(self: Box<Self>) -> DbResult<()>;
+
+    /// Returns the sorted list of all log entries in the database.
+    ///
+    /// Given that this is exposed for testing purposes only, this just returns a flat textual
+    /// representation of the log entry and does not try to deserialize it as a `LogEntry`.  This
+    /// is for simplicity given that a `LogEntry` keeps references to static strings and we cannot
+    /// obtain those from the database.
+    async fn get_log_entries(&mut self) -> DbResult<Vec<String>>;
+
+    /// Appends a series of `entries` to the log.
+    ///
+    /// All entries are inserted at once into the database to avoid unnecessary round trips for each
+    /// log entry, which happen to be very expensive for something as frequent as log messages.
+    ///
+    /// This takes a `Vec` instead of a slice for efficiency, as the writes may have to truncate the
+    /// entries.
+    async fn put_log_entries(&mut self, entries: Vec<LogEntry<'_, '_>>) -> DbResult<()>;
+}
+
+/// Fits the string in `input` within the specified `max_len`.
+fn truncate_option_str(input: Option<&str>, max_len: usize) -> Option<String> {
+    match input {
+        Some(s) => {
+            let mut s = s.to_owned();
+            s.truncate(max_len);
+            Some(s)
+        }
+        None => None,
+    }
+}
