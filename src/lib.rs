@@ -28,8 +28,7 @@ pub(crate) mod logger;
 use crate::logger::LogEntry;
 pub mod pgsql;
 pub use logger::{DbLogger, Handle};
-#[cfg(test)]
-pub(crate) mod sqlite;
+pub mod sqlite;
 #[cfg(test)]
 mod testutils;
 

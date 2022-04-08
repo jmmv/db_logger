@@ -70,6 +70,8 @@
         "datetime",
         "postgres",
         "pgsql",
+        "tempdir",
+        "tempfile",
         "testutils"
     ]
 }

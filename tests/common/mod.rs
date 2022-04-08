@@ -13,9 +13,9 @@
 // License for the specific language governing permissions and limitations
 // under the License.
 
-//! Integration tests for the custom logger.
+//! Integration tests for the database logger, independent of the backing database.
 //!
-//! These tests intend to exercise the `DbLogger` against the real `PostgresDb`.  This makes testing
+//! These tests intend to exercise the `DbLogger` against a real database.  This makes testing
 //! difficult, but we need this level of integration testing to ensure that the logger works
 //! properly and doesn't, for example, enter infinite loops due to recursion.
 //!
@@ -23,7 +23,7 @@
 //! initialize it once here, which in turn limits the granularity of our tests.  We can only have
 //! a single `#[test]` to wrap the whole code in this file
 
-use db_logger::{pgsql, Connection, DbLogger, Handle};
+use db_logger::{Connection, DbLogger, Handle};
 use gethostname::gethostname;
 use log::*;
 use std::env;
@@ -34,13 +34,13 @@ use std::time::Duration;
 ///
 /// `level` is the numerical level of the entry; `line` is the line of code where the message was
 /// raised, and `message` is the free-form text of the entry.
-fn make_log_line(level: u8, line: u32, message: &str) -> String {
+fn make_log_line(test_name: &str, level: u8, line: u32, message: &str) -> String {
     let hostname =
         gethostname().into_string().unwrap_or_else(|_e| String::from("invalid-hostname"));
 
     format!(
-        "SSSS.uuuu {} {} integration_test tests/integration_test.rs:{} {}",
-        hostname, level, line, message
+        "SSSS.uuuu {} {} {}::common tests/common/mod.rs:{} {}",
+        hostname, level, test_name, line, message
     )
 }
 
@@ -55,7 +55,7 @@ fn make_deterministic(lines: Vec<String>) -> Vec<String> {
     new_lines
 }
 
-async fn test_all_levels(handle: &Handle, exp_logs: &mut Vec<String>) {
+async fn test_all_levels(test_name: &str, handle: &Handle, exp_logs: &mut Vec<String>) {
     log::set_max_level(Level::Trace.to_level_filter());
 
     // Testing all levels is critical to ensure any potential log messages written by the database
@@ -68,17 +68,17 @@ async fn test_all_levels(handle: &Handle, exp_logs: &mut Vec<String>) {
     trace!("A trace message");
     log::logger().flush();
 
-    exp_logs.push(make_log_line(1, base_line + 1, "An error message"));
-    exp_logs.push(make_log_line(2, base_line + 2, "A warning message"));
-    exp_logs.push(make_log_line(3, base_line + 3, "An info message"));
-    exp_logs.push(make_log_line(4, base_line + 4, "A debug message"));
-    exp_logs.push(make_log_line(5, base_line + 5, "A trace message"));
+    exp_logs.push(make_log_line(test_name, 1, base_line + 1, "An error message"));
+    exp_logs.push(make_log_line(test_name, 2, base_line + 2, "A warning message"));
+    exp_logs.push(make_log_line(test_name, 3, base_line + 3, "An info message"));
+    exp_logs.push(make_log_line(test_name, 4, base_line + 4, "A debug message"));
+    exp_logs.push(make_log_line(test_name, 5, base_line + 5, "A trace message"));
 
     let entries = handle.get_log_entries().await.unwrap();
     assert_eq!(exp_logs, &make_deterministic(entries));
 }
 
-async fn test_level_filtering(handle: &Handle, exp_logs: &mut Vec<String>) {
+async fn test_level_filtering(test_name: &str, handle: &Handle, exp_logs: &mut Vec<String>) {
     log::set_max_level(Level::Warn.to_level_filter());
 
     // Testing all levels is critical to ensure any potential log messages written by the database
@@ -91,21 +91,21 @@ async fn test_level_filtering(handle: &Handle, exp_logs: &mut Vec<String>) {
     trace!("A trace message");
     log::logger().flush();
 
-    exp_logs.push(make_log_line(1, base_line + 1, "An error message"));
-    exp_logs.push(make_log_line(2, base_line + 2, "A warning message"));
+    exp_logs.push(make_log_line(test_name, 1, base_line + 1, "An error message"));
+    exp_logs.push(make_log_line(test_name, 2, base_line + 2, "A warning message"));
 
     let entries = handle.get_log_entries().await.unwrap();
     assert_eq!(exp_logs, &make_deterministic(entries));
 }
 
-async fn test_auto_flush(handle: &Handle, exp_logs: &mut Vec<String>) {
+async fn test_auto_flush(test_name: &str, handle: &Handle, exp_logs: &mut Vec<String>) {
     log::set_max_level(Level::Info.to_level_filter());
 
     let base_line = line!();
     info!("Another message");
     // Do not call flush here.  We should see the message show up eventually.
 
-    exp_logs.push(make_log_line(3, base_line + 1, "Another message"));
+    exp_logs.push(make_log_line(test_name, 3, base_line + 1, "Another message"));
 
     let mut retries = 30;
     while retries > 0 {
@@ -121,13 +121,18 @@ async fn test_auto_flush(handle: &Handle, exp_logs: &mut Vec<String>) {
     }
 }
 
-async fn test_flood(handle: &Handle, exp_logs: &mut Vec<String>) {
+async fn test_flood(test_name: &str, handle: &Handle, exp_logs: &mut Vec<String>) {
     log::set_max_level(Level::Info.to_level_filter());
 
     for i in 0..10240 {
         let base_line = line!();
         info!("Message with index {}", i);
-        exp_logs.push(make_log_line(3, base_line + 1, &format!("Message with index {}", i)));
+        exp_logs.push(make_log_line(
+            test_name,
+            3,
+            base_line + 1,
+            &format!("Message with index {}", i),
+        ));
     }
     log::logger().flush();
 
@@ -135,37 +140,19 @@ async fn test_flood(handle: &Handle, exp_logs: &mut Vec<String>) {
     assert_eq!(exp_logs, &make_deterministic(entries));
 }
 
-#[test]
-#[ignore = "Requires environment configuration and is expensive"]
-fn test_everything() {
-    // Initialize the test database.  We must do this outside of the async block because we rely on
-    // `drop` to clean up the resources, and because `Drop` is not async. Our implementation starts
-    // a tokio runtime, so we must ensure there is no runtime running when we call it below.
-    #[tokio::main]
-    async fn prepare() -> Connection {
-        pgsql::setup_test().await
-    }
-    let db = prepare();
-
-    // Launch the tests.
+/// Run all tests against an established `db` connection.
+pub(crate) fn do_test_everything(test_name: &str, db: Connection) {
     #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
-    async fn run_tests(db: Connection) {
+    async fn run_tests(test_name: &str, db: Connection) {
         env::set_var("RUST_LOG", "trace");
         let handle = DbLogger::init(db);
 
         let mut logs_accumulator = vec![];
 
-        test_all_levels(&handle, &mut logs_accumulator).await;
-        test_level_filtering(&handle, &mut logs_accumulator).await;
-        test_auto_flush(&handle, &mut logs_accumulator).await;
-        test_flood(&handle, &mut logs_accumulator).await;
+        test_all_levels(test_name, &handle, &mut logs_accumulator).await;
+        test_level_filtering(test_name, &handle, &mut logs_accumulator).await;
+        test_auto_flush(test_name, &handle, &mut logs_accumulator).await;
+        test_flood(test_name, &handle, &mut logs_accumulator).await;
     }
-    run_tests(db.clone());
-
-    // We don't have to explicitly drop `db` here, but this is to clarify that this is where
-    // cleaning up the test database happens.
-    //
-    // Note that the global logger still holds a reference to the database... so if we happen to
-    // log anything after this, we enter undefined behavior.
-    drop(db);
+    run_tests(test_name, db);
 }
