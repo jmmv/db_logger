@@ -18,7 +18,6 @@
 use crate::logger::LogEntry;
 
 pub mod pgsql;
-pub use pgsql::PostgresDb;
 #[cfg(test)]
 pub(crate) mod sqlite;
 #[cfg(test)]
@@ -87,14 +86,14 @@ fn truncate_option_str(input: Option<&str>, max_len: usize) -> Option<String> {
 
 /// Abstraction over the database connection.
 #[async_trait::async_trait]
-pub trait Db {
+pub(crate) trait Db {
     /// Begins a transaction.
     async fn begin<'a>(&'a self) -> DbResult<Box<dyn Tx<'a> + 'a + Send>>;
 }
 
 /// A transaction with high-level operations that deal with our types.
 #[async_trait::async_trait]
-pub trait Tx<'a> {
+pub(crate) trait Tx<'a> {
     /// Commits the transaction.  The transaction is rolled back on drop unless this is called.
     async fn commit(self: Box<Self>) -> DbResult<()>;
 
