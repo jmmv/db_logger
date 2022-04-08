@@ -17,12 +17,10 @@
 
 use crate::logger::LogEntry;
 
-pub(crate) mod pgsql;
+pub mod pgsql;
 pub use pgsql::PostgresDb;
 #[cfg(test)]
-mod sqlite;
-#[cfg(test)]
-pub(crate) use sqlite::InMemoryDb;
+pub(crate) mod sqlite;
 #[cfg(test)]
 mod testutils;
 

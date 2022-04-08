@@ -22,6 +22,7 @@
 
 use crate::clocks::{Clock, SystemClock};
 use crate::db::{Db, DbResult};
+use crate::Connection;
 use gethostname::gethostname;
 use log::{Level, Log, Metadata, Record};
 use std::env;
@@ -210,7 +211,7 @@ fn env_rust_log() -> Level {
 /// Once this object goes out of scope, the logger's persisting logic stops and any log messages
 /// emitted afterwards are not recorded.
 pub struct Handle {
-    db: Arc<dyn Db + Send + Sync + 'static>,
+    db: Connection,
     action_tx: mpsc::SyncSender<Action>,
     done_rx: Arc<Mutex<mpsc::Receiver<()>>>,
 }
@@ -223,7 +224,7 @@ impl Handle {
     /// is for simplicity given that a `LogEntry` keeps references to static strings and we cannot
     /// obtain those from the database.
     pub async fn get_log_entries(&self) -> DbResult<Vec<String>> {
-        let mut tx = self.db.begin().await?;
+        let mut tx = self.db.0.begin().await?;
         let entries = tx.get_log_entries().await?;
         tx.commit().await?;
         Ok(entries)
@@ -256,14 +257,14 @@ impl DbLogger {
     /// hostname of the entries to `hostname`.
     fn new(
         hostname: String,
-        db: Arc<dyn Db + Send + Sync + 'static>,
+        db: Connection,
         clock: Arc<dyn Clock + Send + Sync + 'static>,
     ) -> Self {
         let (action_tx, action_rx) = mpsc::sync_channel(CHANNEL_SIZE);
         let (done_tx, done_rx) = mpsc::sync_channel(1);
 
         tokio::spawn(async move {
-            recorder(db, action_rx, done_tx).await;
+            recorder(db.0, action_rx, done_tx).await;
         });
 
         let done_rx = Arc::from(Mutex::from(done_rx));
@@ -275,7 +276,7 @@ impl DbLogger {
     ///
     /// Logger configuration happens via environment variables and tries to respect the same
     /// variables that `env_logger` recognizes.  Misconfigured variables result in a fatal error.
-    pub fn init(db: Arc<dyn Db + Send + Sync + 'static>) -> Handle {
+    pub fn init(db: Connection) -> Handle {
         let max_level = env_rust_log();
 
         let hostname =
@@ -348,12 +349,12 @@ mod tests {
 
     use super::*;
     use crate::clocks::MonotonicClock;
-    use crate::db::InMemoryDb;
+    use crate::db::sqlite;
     use log::RecordBuilder;
 
     /// Sets up the logger backing it with an in-memory database and a fake clock.
-    async fn setup() -> (DbLogger, Arc<InMemoryDb>) {
-        let db = Arc::from(InMemoryDb::connect().await.unwrap());
+    async fn setup() -> (DbLogger, Connection) {
+        let db = sqlite::setup_test().await.unwrap();
         let clock = Arc::from(MonotonicClock::new(1000));
         (DbLogger::new("fake-hostname".to_owned(), db.clone(), clock), db)
     }
@@ -386,7 +387,7 @@ mod tests {
         emit_all_log_levels(&logger);
 
         logger.flush();
-        let mut tx = db.begin().await.unwrap();
+        let mut tx = db.0.begin().await.unwrap();
         let entries = tx.get_log_entries().await.unwrap();
         assert_eq!(
             vec![

@@ -23,39 +23,11 @@
 //! initialize it once here, which in turn limits the granularity of our tests.  We can only have
 //! a single `#[test]` to wrap the whole code in this file
 
-use db_logger::{DbLogger, Handle, PostgresDb};
+use db_logger::{pgsql, Connection, DbLogger, Handle};
 use gethostname::gethostname;
 use log::*;
 use std::env;
-use std::sync::Arc;
 use std::time::Duration;
-
-/// Wrapper to prepare and clean up the test database.
-struct TestContext {
-    db: Arc<PostgresDb>,
-}
-
-impl TestContext {
-    /// Initializes the test database.
-    fn setup() -> TestContext {
-        #[tokio::main]
-        async fn prepare() -> TestContext {
-            let db = Arc::from(PostgresDb::setup_test().await);
-            TestContext { db }
-        }
-        prepare()
-    }
-}
-
-impl Drop for TestContext {
-    fn drop(&mut self) {
-        #[tokio::main]
-        async fn cleanup(context: &mut TestContext) {
-            context.db.teardown_test().await;
-        }
-        cleanup(self)
-    }
-}
 
 /// Generates a log line to match the test format returned by `Db::get_log_entries` for a log
 /// entry emitted from this module and processed by `make_deterministic`.
@@ -169,13 +141,17 @@ fn test_everything() {
     // Initialize the test database.  We must do this outside of the async block because we rely on
     // `drop` to clean up the resources, and because `Drop` is not async. Our implementation starts
     // a tokio runtime, so we must ensure there is no runtime running when we call it below.
-    let context = TestContext::setup();
+    #[tokio::main]
+    async fn prepare() -> Connection {
+        pgsql::setup_test().await
+    }
+    let db = prepare();
 
     // Launch the tests.
     #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
-    async fn run_tests(db: Arc<PostgresDb>) {
+    async fn run_tests(db: Connection) {
         env::set_var("RUST_LOG", "trace");
-        let handle = DbLogger::init(db.clone());
+        let handle = DbLogger::init(db);
 
         let mut logs_accumulator = vec![];
 
@@ -184,12 +160,12 @@ fn test_everything() {
         test_auto_flush(&handle, &mut logs_accumulator).await;
         test_flood(&handle, &mut logs_accumulator).await;
     }
-    run_tests(context.db.clone());
+    run_tests(db.clone());
 
-    // We don't have to explicitly drop `context` here, but this is to clarify that this is where
+    // We don't have to explicitly drop `db` here, but this is to clarify that this is where
     // cleaning up the test database happens.
     //
     // Note that the global logger still holds a reference to the database... so if we happen to
     // log anything after this, we enter undefined behavior.
-    drop(context);
+    drop(db);
 }

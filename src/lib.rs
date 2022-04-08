@@ -21,9 +21,15 @@
 #![warn(unused, unused_extern_crates, unused_import_braces, unused_qualifications)]
 #![warn(unsafe_code)]
 
+use std::sync::Arc;
+
 mod clocks;
 pub(crate) mod db;
 pub(crate) mod logger;
 
-pub use db::{Db, PostgresDb};
+pub use db::pgsql;
 pub use logger::{DbLogger, Handle};
+
+/// Opaque type representing a connection to the logging database.
+#[derive(Clone)]
+pub struct Connection(Arc<dyn db::Db + Send + Sync + 'static>);
