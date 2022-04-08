@@ -16,9 +16,9 @@
 //! Implementation of the database abstraction using PostgreSQL.
 
 use crate::logger::LogEntry;
-use crate::{truncate_option_str, Connection, Db, DbError, DbResult, Tx};
+use crate::{truncate_option_str, Connection, Db, Result, Tx};
 use futures::TryStreamExt;
-use sqlx::postgres::{PgConnectOptions, PgDatabaseError, PgPool, Postgres};
+use sqlx::postgres::{PgConnectOptions, PgPool, Postgres};
 use sqlx::{Row, Transaction};
 use std::env;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -51,26 +51,10 @@ pub async fn setup_test() -> Connection {
     Connection(Arc::from(db))
 }
 
-/// Takes a raw SQLx error `e` and converts it to our generic error type.
-fn map_sqlx_error(e: sqlx::Error) -> DbError {
-    match e {
-        sqlx::Error::RowNotFound => DbError::NotFound,
-        sqlx::Error::Database(e) => match e.downcast_ref::<PgDatabaseError>().code() {
-            "23503" /* foreign_key_violation */ => DbError::NotFound,
-            "23505" /* unique_violation */ => DbError::AlreadyExists,
-            number => DbError::BackendError(format!("pgsql error {}: {}", number, e)),
-        },
-        e => DbError::BackendError(e.to_string()),
-    }
-}
-
 /// Converts an `u32` from the in-memory model to an `i16` suitable for storage.
-fn u32_to_i16(field: &'static str, unsigned: u32) -> DbResult<i16> {
+fn u32_to_i16(field: &'static str, unsigned: u32) -> Result<i16> {
     if unsigned > i16::MAX as u32 {
-        return Err(DbError::BackendError(format!(
-            "{} ({}) is too large for i16",
-            field, unsigned
-        )));
+        return Err(format!("{} ({}) is too large for i16", field, unsigned));
     }
     Ok(unsigned as i16)
 }
@@ -112,23 +96,16 @@ impl PostgresDb {
 
 #[async_trait::async_trait]
 impl Db for PostgresDb {
-    async fn begin<'a>(&'a self) -> DbResult<Box<dyn Tx<'a> + 'a + Send>> {
-        loop {
-            match self.pool.begin().await.map_err(map_sqlx_error) {
-                Ok(tx) => {
-                    return Ok(Box::from(PostgresTx {
-                        db: self,
-                        tx,
-                        log_sequence: self.log_sequence.clone(),
-                    }))
-                }
-                Err(DbError::Unavailable) => {
-                    log::warn!("Database is not available; retrying");
-                    // TODO(jmmv): Implement retries and backoff.  Or maybe delegate to the client
-                    // altogether, as the client should do this too.
-                }
-                Err(e) => return Err(e),
+    async fn begin<'a>(&'a self) -> Result<Box<dyn Tx<'a> + 'a + Send>> {
+        match self.pool.begin().await.map_err(|e| e.to_string()) {
+            Ok(tx) => {
+                return Ok(Box::from(PostgresTx {
+                    db: self,
+                    tx,
+                    log_sequence: self.log_sequence.clone(),
+                }))
             }
+            Err(e) => return Err(e),
         }
     }
 }
@@ -170,7 +147,7 @@ impl PostgresTestDb {
 
         let mut tx = db.pool.begin().await.unwrap();
         for query_str in schema.split(';') {
-            sqlx::query(query_str).execute(&mut tx).await.map_err(map_sqlx_error).unwrap();
+            sqlx::query(query_str).execute(&mut tx).await.unwrap();
         }
         tx.commit().await.unwrap();
 
@@ -192,7 +169,7 @@ impl PostgresTestDb {
             format!("DROP INDEX logs_{}_by_timestamp", suffix),
             format!("DROP TABLE logs_{}", suffix),
         ] {
-            sqlx::query(query_str).execute(&mut tx).await.map_err(map_sqlx_error).unwrap();
+            sqlx::query(query_str).execute(&mut tx).await.unwrap();
         }
         tx.commit().await.unwrap();
 
@@ -212,7 +189,7 @@ impl Drop for PostgresTestDb {
 
 #[async_trait::async_trait]
 impl Db for PostgresTestDb {
-    async fn begin<'a>(&'a self) -> DbResult<Box<dyn Tx<'a> + 'a + Send>> {
+    async fn begin<'a>(&'a self) -> Result<Box<dyn Tx<'a> + 'a + Send>> {
         self.0.begin().await
     }
 }
@@ -226,23 +203,23 @@ struct PostgresTx<'a> {
 
 #[async_trait::async_trait]
 impl<'a> Tx<'a> for PostgresTx<'a> {
-    async fn commit(self: Box<Self>) -> DbResult<()> {
-        self.tx.commit().await.map_err(map_sqlx_error)?;
+    async fn commit(self: Box<Self>) -> Result<()> {
+        self.tx.commit().await.map_err(|e| e.to_string())?;
         Ok(())
     }
 
-    async fn get_log_entries(&mut self) -> DbResult<Vec<String>> {
+    async fn get_log_entries(&mut self) -> Result<Vec<String>> {
         let query_str = self.db.patch_query("SELECT * FROM logs ORDER BY timestamp, sequence");
         let mut rows = sqlx::query(&query_str).fetch(&mut self.tx);
         let mut entries = vec![];
-        while let Some(row) = rows.try_next().await.map_err(map_sqlx_error)? {
-            let timestamp: OffsetDateTime = row.try_get("timestamp").map_err(map_sqlx_error)?;
-            let hostname: String = row.try_get("hostname").map_err(map_sqlx_error)?;
-            let level: i16 = row.try_get("level").map_err(map_sqlx_error)?;
-            let module: Option<String> = row.try_get("module").map_err(map_sqlx_error)?;
-            let filename: Option<String> = row.try_get("filename").map_err(map_sqlx_error)?;
-            let line: Option<i16> = row.try_get("line").map_err(map_sqlx_error)?;
-            let message: String = row.try_get("message").map_err(map_sqlx_error)?;
+        while let Some(row) = rows.try_next().await.map_err(|e| e.to_string())? {
+            let timestamp: OffsetDateTime = row.try_get("timestamp").map_err(|e| e.to_string())?;
+            let hostname: String = row.try_get("hostname").map_err(|e| e.to_string())?;
+            let level: i16 = row.try_get("level").map_err(|e| e.to_string())?;
+            let module: Option<String> = row.try_get("module").map_err(|e| e.to_string())?;
+            let filename: Option<String> = row.try_get("filename").map_err(|e| e.to_string())?;
+            let line: Option<i16> = row.try_get("line").map_err(|e| e.to_string())?;
+            let message: String = row.try_get("message").map_err(|e| e.to_string())?;
 
             entries.push(format!(
                 "{}.{} {} {} {} {}:{} {}",
@@ -259,18 +236,18 @@ impl<'a> Tx<'a> for PostgresTx<'a> {
         Ok(entries)
     }
 
-    async fn put_log_entries(&mut self, entries: Vec<LogEntry<'_, '_>>) -> DbResult<()> {
+    async fn put_log_entries(&mut self, entries: Vec<LogEntry<'_, '_>>) -> Result<()> {
         let nentries = entries.len();
         if nentries == 0 {
             return Ok(());
         }
 
         if nentries > std::u32::MAX as usize {
-            return Err(DbError::BackendError(format!(
+            return Err(format!(
                 "Cannot insert {} log entries at once; max is {}",
                 nentries,
                 std::u32::MAX
-            )));
+            ));
         }
         let mut sequence = self.log_sequence.fetch_add(nentries as u32, Ordering::SeqCst);
 
@@ -323,13 +300,13 @@ impl<'a> Tx<'a> for PostgresTx<'a> {
             sequence += 1;
         }
 
-        let done = query.execute(&mut self.tx).await.map_err(map_sqlx_error)?;
+        let done = query.execute(&mut self.tx).await.map_err(|e| e.to_string())?;
         if done.rows_affected() as usize != nentries {
-            return Err(DbError::BackendError(format!(
+            return Err(format!(
                 "Log entries insertion created {} rows but expected {}",
                 done.rows_affected(),
                 nentries
-            )));
+            ));
         }
         Ok(())
     }

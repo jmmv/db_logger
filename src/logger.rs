@@ -21,7 +21,7 @@
 //! `stderr`.
 
 use crate::clocks::{Clock, SystemClock};
-use crate::{Connection, Db, DbResult};
+use crate::{Connection, Db, Result};
 use gethostname::gethostname;
 use log::{Level, Log, Metadata, Record};
 use std::env;
@@ -222,7 +222,7 @@ impl Handle {
     /// representation of the log entry and does not try to deserialize it as a `LogEntry`.  This
     /// is for simplicity given that a `LogEntry` keeps references to static strings and we cannot
     /// obtain those from the database.
-    pub async fn get_log_entries(&self) -> DbResult<Vec<String>> {
+    pub async fn get_log_entries(&self) -> Result<Vec<String>> {
         let mut tx = self.db.0.begin().await?;
         let entries = tx.get_log_entries().await?;
         tx.commit().await?;

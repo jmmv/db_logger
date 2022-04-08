@@ -37,45 +37,21 @@ mod testutils;
 #[derive(Clone)]
 pub struct Connection(Arc<dyn Db + Send + Sync + 'static>);
 
-/// Database errors.  Any unexpected errors that come from the database are classified as
-/// `BackendError`, but errors we know about have more specific types.
-#[allow(missing_docs)]
-#[derive(Debug, thiserror::Error, PartialEq)]
-pub enum DbError {
-    #[error("Already exists")]
-    AlreadyExists,
-
-    #[error("Database error: {0}")]
-    BackendError(String),
-
-    #[error("Data integrity error: {0}")]
-    DataIntegrityError(String),
-
-    #[error("Invalid request: {0}")]
-    InvalidRequest(String),
-
-    #[error("Entity not found")]
-    NotFound,
-
-    #[error("Service unavailable; back off and retry")]
-    Unavailable,
-}
-
-/// Result type for this module.
-pub(crate) type DbResult<T> = Result<T, DbError>;
+/// Result type for this library.
+pub(crate) type Result<T> = std::result::Result<T, String>;
 
 /// Abstraction over the database connection.
 #[async_trait::async_trait]
 pub(crate) trait Db {
     /// Begins a transaction.
-    async fn begin<'a>(&'a self) -> DbResult<Box<dyn Tx<'a> + 'a + Send>>;
+    async fn begin<'a>(&'a self) -> Result<Box<dyn Tx<'a> + 'a + Send>>;
 }
 
 /// A transaction with high-level operations that deal with our types.
 #[async_trait::async_trait]
 pub(crate) trait Tx<'a> {
     /// Commits the transaction.  The transaction is rolled back on drop unless this is called.
-    async fn commit(self: Box<Self>) -> DbResult<()>;
+    async fn commit(self: Box<Self>) -> Result<()>;
 
     /// Returns the sorted list of all log entries in the database.
     ///
@@ -83,7 +59,7 @@ pub(crate) trait Tx<'a> {
     /// representation of the log entry and does not try to deserialize it as a `LogEntry`.  This
     /// is for simplicity given that a `LogEntry` keeps references to static strings and we cannot
     /// obtain those from the database.
-    async fn get_log_entries(&mut self) -> DbResult<Vec<String>>;
+    async fn get_log_entries(&mut self) -> Result<Vec<String>>;
 
     /// Appends a series of `entries` to the log.
     ///
@@ -92,7 +68,7 @@ pub(crate) trait Tx<'a> {
     ///
     /// This takes a `Vec` instead of a slice for efficiency, as the writes may have to truncate the
     /// entries.
-    async fn put_log_entries(&mut self, entries: Vec<LogEntry<'_, '_>>) -> DbResult<()>;
+    async fn put_log_entries(&mut self, entries: Vec<LogEntry<'_, '_>>) -> Result<()>;
 }
 
 /// Fits the string in `input` within the specified `max_len`.
