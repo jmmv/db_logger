@@ -22,14 +22,14 @@ use time::OffsetDateTime;
 use time::{Date, Time};
 
 /// Generic definition of a clock.
-pub trait Clock {
+pub(crate) trait Clock {
     /// Returns the current UTC time.
     fn now_utc(&self) -> OffsetDateTime;
 }
 
 /// Clock implementation that uses the system clock.
 #[derive(Default)]
-pub struct SystemClock {}
+pub(crate) struct SystemClock {}
 
 impl Clock for SystemClock {
     fn now_utc(&self) -> OffsetDateTime {

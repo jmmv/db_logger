@@ -20,7 +20,7 @@
 //! functional (and because using them would cause us to recurse), any errors are printed to
 //! `stderr`.
 
-use crate::clocks::Clock;
+use crate::clocks::{Clock, SystemClock};
 use crate::db::{Db, DbResult};
 use gethostname::gethostname;
 use log::{Level, Log, Metadata, Record};
@@ -275,16 +275,13 @@ impl DbLogger {
     ///
     /// Logger configuration happens via environment variables and tries to respect the same
     /// variables that `env_logger` recognizes.  Misconfigured variables result in a fatal error.
-    pub fn init(
-        db: Arc<dyn Db + Send + Sync + 'static>,
-        clock: Arc<dyn Clock + Send + Sync + 'static>,
-    ) -> Handle {
+    pub fn init(db: Arc<dyn Db + Send + Sync + 'static>) -> Handle {
         let max_level = env_rust_log();
 
         let hostname =
             gethostname().into_string().unwrap_or_else(|_e| String::from("invalid-hostname"));
 
-        let logger = DbLogger::new(hostname, db.clone(), clock.clone());
+        let logger = DbLogger::new(hostname, db.clone(), Arc::from(SystemClock::default()));
         let handle =
             Handle { db, action_tx: logger.action_tx.clone(), done_rx: logger.done_rx.clone() };
 
