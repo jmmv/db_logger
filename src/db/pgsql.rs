@@ -16,6 +16,7 @@
 //! Implementation of the database abstraction using PostgreSQL.
 
 use crate::db::*;
+use crate::Connection;
 use futures::TryStreamExt;
 use sqlx::postgres::{PgConnectOptions, PgDatabaseError, PgPool, Postgres};
 use sqlx::{Row, Transaction};
@@ -32,6 +33,23 @@ pub(crate) const LOG_ENTRY_MAX_HOSTNAME_LENGTH: usize = 64;
 pub(crate) const LOG_ENTRY_MAX_MODULE_LENGTH: usize = 64;
 pub(crate) const LOG_ENTRY_MAX_FILENAME_LENGTH: usize = 256;
 pub(crate) const LOG_ENTRY_MAX_MESSAGE_LENGTH: usize = 1024;
+
+/// Factory to connect to a PostgreSQL database.
+pub fn connect_lazy(
+    host: &str,
+    port: u16,
+    database: &str,
+    username: &str,
+    password: &str,
+) -> Connection {
+    Connection(Arc::from(PostgresDb::connect_lazy(host, port, database, username, password)))
+}
+
+/// Factory to connect to and initialize a PostgreSQL test database.
+pub async fn setup_test() -> Connection {
+    let db = PostgresTestDb::setup_test().await;
+    Connection(Arc::from(db))
+}
 
 /// Takes a raw SQLx error `e` and converts it to our generic error type.
 fn map_sqlx_error(e: sqlx::Error) -> DbError {
@@ -77,6 +95,47 @@ impl PostgresDb {
         }
     }
 
+    /// Given a `query`, replaces table and index identifiers to account for the `suffix` rename
+    /// used during tests.
+    fn patch_query(&self, query: &str) -> String {
+        match self.suffix {
+            None => query.to_owned(),
+            Some(suffix) => query.replace(" logs", &format!(" logs_{}", suffix)),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Db for PostgresDb {
+    async fn begin<'a>(&'a self) -> DbResult<Box<dyn Tx<'a> + 'a + Send>> {
+        loop {
+            match self.pool.begin().await.map_err(map_sqlx_error) {
+                Ok(tx) => {
+                    return Ok(Box::from(PostgresTx {
+                        db: self,
+                        tx,
+                        log_sequence: self.log_sequence.clone(),
+                    }))
+                }
+                Err(DbError::Unavailable) => {
+                    log::warn!("Database is not available; retrying");
+                    // TODO(jmmv): Implement retries and backoff.  Or maybe delegate to the client
+                    // altogether, as the client should do this too.
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+}
+
+/// A wrapper over `PostgresDb` to initialize and clean up a test database instance.
+///
+/// Instances of this object *must* be held on a non-async context without any async runtime
+/// because `drop` needs to enter a new runtime to clean up the database.
+#[derive(Clone)]
+struct PostgresTestDb(PostgresDb);
+
+impl PostgresTestDb {
     /// Creates a new connection to the test database and initializes it.
     ///
     /// The caller must arrange to call `teardown_test` on its own as it is appropriate.  We do not
@@ -110,7 +169,7 @@ impl PostgresDb {
         }
         tx.commit().await.unwrap();
 
-        db
+        PostgresTestDb(db)
     }
 
     /// Deletes the state created by `setup_test` and shuts the pool down.
@@ -118,12 +177,12 @@ impl PostgresDb {
     /// As this is only for testing, any errors result in a panic.  Attempting to use the database
     /// after this has been called has undefined behavior.
     pub async fn teardown_test(&self) {
-        let suffix = self.suffix.expect("This should only be called from tests");
+        let suffix = self.0.suffix.expect("This should only be called from tests");
 
         // Do not use patch_query here: we must make sure the fake names cannot possibly match the
         // values in production, and the extra `_` characters before the `{}` placeholders ensure
         // that this is true.
-        let mut tx = self.pool.begin().await.unwrap();
+        let mut tx = self.0.pool.begin().await.unwrap();
         for query_str in &[
             format!("DROP INDEX logs_{}_by_timestamp", suffix),
             format!("DROP TABLE logs_{}", suffix),
@@ -132,39 +191,24 @@ impl PostgresDb {
         }
         tx.commit().await.unwrap();
 
-        self.pool.close().await;
+        self.0.pool.close().await;
     }
+}
 
-    /// Given a `query`, replaces table and index identifiers to account for the `suffix` rename
-    /// used during tests.
-    fn patch_query(&self, query: &str) -> String {
-        match self.suffix {
-            None => query.to_owned(),
-            Some(suffix) => query.replace(" logs", &format!(" logs_{}", suffix)),
+impl Drop for PostgresTestDb {
+    fn drop(&mut self) {
+        #[tokio::main]
+        async fn cleanup(context: &mut PostgresTestDb) {
+            context.teardown_test().await;
         }
+        cleanup(self)
     }
 }
 
 #[async_trait::async_trait]
-impl Db for PostgresDb {
+impl Db for PostgresTestDb {
     async fn begin<'a>(&'a self) -> DbResult<Box<dyn Tx<'a> + 'a + Send>> {
-        loop {
-            match self.pool.begin().await.map_err(map_sqlx_error) {
-                Ok(tx) => {
-                    return Ok(Box::from(PostgresTx {
-                        db: self,
-                        tx,
-                        log_sequence: self.log_sequence.clone(),
-                    }))
-                }
-                Err(DbError::Unavailable) => {
-                    log::warn!("Database is not available; retrying");
-                    // TODO(jmmv): Implement retries and backoff.  Or maybe delegate to the client
-                    // altogether, as the client should do this too.
-                }
-                Err(e) => return Err(e),
-            }
-        }
+        self.0.begin().await
     }
 }
 
@@ -293,7 +337,7 @@ mod tests {
 
     /// Test context to allow automatic cleanup of the test database.
     struct PostgresTestContext {
-        db: PostgresDb,
+        db: PostgresTestDb,
     }
 
     #[async_trait::async_trait]
@@ -307,23 +351,13 @@ mod tests {
         }
     }
 
-    impl Drop for PostgresTestContext {
-        fn drop(&mut self) {
-            #[tokio::main]
-            async fn cleanup(db: &mut PostgresDb) {
-                db.teardown_test().await;
-            }
-            cleanup(&mut self.db);
-        }
-    }
-
     /// Initializes the test environment by creating unique tables in the test database.
     fn setup() -> Box<dyn testutils::TestContext> {
         let _can_fail = env_logger::builder().is_test(true).try_init();
 
         #[tokio::main]
-        async fn prepare() -> PostgresDb {
-            PostgresDb::setup_test().await
+        async fn prepare() -> PostgresTestDb {
+            PostgresTestDb::setup_test().await
         }
         Box::from(PostgresTestContext { db: prepare() })
     }

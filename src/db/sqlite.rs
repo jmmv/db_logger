@@ -20,6 +20,7 @@ use crate::db::pgsql::{
     LOG_ENTRY_MAX_MODULE_LENGTH,
 };
 use crate::db::*;
+use crate::Connection;
 use futures::TryStreamExt;
 use sqlx::sqlite::{Sqlite, SqlitePool};
 use sqlx::{Row, Transaction};
@@ -30,6 +31,11 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 /// Schema to use to initialize the test database.
 const SCHEMA: &str = include_str!("../../schemas/sqlite.sql");
+
+/// Factory to connect to and initialize an in-memory SQLite test database.
+pub async fn setup_test() -> DbResult<Connection> {
+    InMemoryDb::connect().await.map(|db| Connection(Arc::from(db)))
+}
 
 /// Takes a raw SQLx error `e` and converts it to our generic error type.
 fn map_sqlx_error(e: sqlx::Error) -> DbError {
