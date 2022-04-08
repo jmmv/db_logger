@@ -50,7 +50,7 @@ pub enum DbError {
 }
 
 /// Result type for this module.
-type DbResult<T> = Result<T, DbError>;
+pub(crate) type DbResult<T> = Result<T, DbError>;
 
 /// Converts an `u32` from the in-memory model to an `i16` suitable for storage.
 fn u32_to_i16(field: &'static str, unsigned: u32) -> DbResult<i16> {
