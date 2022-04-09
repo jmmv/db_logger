@@ -15,7 +15,10 @@
 
 //! Implementation of the database abstraction using PostgreSQL.
 
-use crate::logger::LogEntry;
+use crate::logger::{
+    LogEntry, LOG_ENTRY_MAX_FILENAME_LENGTH, LOG_ENTRY_MAX_HOSTNAME_LENGTH,
+    LOG_ENTRY_MAX_MESSAGE_LENGTH, LOG_ENTRY_MAX_MODULE_LENGTH,
+};
 use crate::{truncate_option_str, Connection, Db, Result, Tx};
 use futures::TryStreamExt;
 use sqlx::postgres::{PgConnectOptions, PgPool, Postgres};
@@ -27,12 +30,6 @@ use time::OffsetDateTime;
 
 /// Schema to use to initialize the test database.
 const SCHEMA: &str = include_str!("../schemas/pgsql.sql");
-
-// Maximum sizes of the corresponding fields in the schema.
-pub(crate) const LOG_ENTRY_MAX_HOSTNAME_LENGTH: usize = 64;
-pub(crate) const LOG_ENTRY_MAX_MODULE_LENGTH: usize = 64;
-pub(crate) const LOG_ENTRY_MAX_FILENAME_LENGTH: usize = 256;
-pub(crate) const LOG_ENTRY_MAX_MESSAGE_LENGTH: usize = 1024;
 
 /// Factory to connect to a PostgreSQL database.
 pub fn connect_lazy(

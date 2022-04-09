@@ -11,6 +11,11 @@ readme = "README.md"
 edition = "2018"
 publish = false
 
+[features]
+default = ["pgsql", "sqlite"]
+pgsql = ["sqlx/postgres"]
+sqlite = ["sqlx/sqlite"]
+
 [dependencies]
 async-trait = "0.1"
 futures = "0.3"
@@ -18,12 +23,9 @@ gethostname = "0.2"
 log = "0.4"
 rand = "0.8"
 regex = "1"
+sqlx = { version = "0.5", features = ["runtime-async-std-rustls", "time"] }
 time = "0.2.16"
 tokio = "1"
-
-[dependencies.sqlx]
-version = "0.5"
-features = ["postgres", "runtime-async-std-rustls", "sqlite", "time"]
 
 [dev-dependencies]
 env_logger = "0.8"

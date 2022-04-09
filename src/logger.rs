@@ -46,6 +46,13 @@ const MAX_FLUSH_DELAY_SECS: u64 = 5;
 /// Default log level when `RUST_LOG` is not set.
 const DEFAULT_LOG_LEVEL: Level = Level::Warn;
 
+// Maximum sizes of the corresponding fields in the schema.
+// TODO(jmmv): We should not impose the restrictions of one backend (pgsql) on others (sqlite).
+pub(crate) const LOG_ENTRY_MAX_HOSTNAME_LENGTH: usize = 64;
+pub(crate) const LOG_ENTRY_MAX_MODULE_LENGTH: usize = 64;
+pub(crate) const LOG_ENTRY_MAX_FILENAME_LENGTH: usize = 256;
+pub(crate) const LOG_ENTRY_MAX_MESSAGE_LENGTH: usize = 1024;
+
 /// Contents of a log entry.
 #[derive(Debug)]
 pub(crate) struct LogEntry<'a, 'b> {
@@ -338,6 +345,7 @@ impl Log for DbLogger {
 }
 
 #[cfg(test)]
+#[cfg(feature = "sqlite")]
 mod tests {
     //! Unit-tests for the database-backed logger.
     //!

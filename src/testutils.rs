@@ -15,10 +15,9 @@
 
 //! Common tests for any database implementation.
 
-use crate::logger::LogEntry;
-use crate::pgsql::{
-    LOG_ENTRY_MAX_FILENAME_LENGTH, LOG_ENTRY_MAX_HOSTNAME_LENGTH, LOG_ENTRY_MAX_MESSAGE_LENGTH,
-    LOG_ENTRY_MAX_MODULE_LENGTH,
+use crate::logger::{
+    LogEntry, LOG_ENTRY_MAX_FILENAME_LENGTH, LOG_ENTRY_MAX_HOSTNAME_LENGTH,
+    LOG_ENTRY_MAX_MESSAGE_LENGTH, LOG_ENTRY_MAX_MODULE_LENGTH,
 };
 use crate::{Db, Tx};
 use time::OffsetDateTime;
