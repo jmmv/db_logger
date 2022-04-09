@@ -15,6 +15,8 @@
 
 //! Integration tests for the database logger using the SQLite backend.
 
+#![cfg(feature = "sqlite")]
+
 use db_logger::{sqlite, Connection};
 use std::path::Path;
 

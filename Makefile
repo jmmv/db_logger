@@ -19,7 +19,10 @@ sinclude config.mk
 default: test
 
 .PHONY: test
-test:
+test: test-default
+
+.PHONY: test-default
+test-default:
 	@RUST_LOG=debug \
 	    PGSQL_TEST_HOST="$(PGSQL_TEST_HOST)" \
 	    PGSQL_TEST_PORT="$(PGSQL_TEST_PORT)" \
@@ -27,6 +30,23 @@ test:
 	    PGSQL_TEST_USERNAME="$(PGSQL_TEST_USERNAME)" \
 	    PGSQL_TEST_PASSWORD="$(PGSQL_TEST_PASSWORD)" \
 	    cargo test $(TEST_ARGS) -- --include-ignored
+
+.PHONY: test-pgsql
+test-pgsql:
+	@RUST_LOG=debug \
+	    PGSQL_TEST_HOST="$(PGSQL_TEST_HOST)" \
+	    PGSQL_TEST_PORT="$(PGSQL_TEST_PORT)" \
+	    PGSQL_TEST_DATABASE="$(PGSQL_TEST_DATABASE)" \
+	    PGSQL_TEST_USERNAME="$(PGSQL_TEST_USERNAME)" \
+	    PGSQL_TEST_PASSWORD="$(PGSQL_TEST_PASSWORD)" \
+	    cargo test --no-default-features --features=pgsql --lib --test \
+	    pgsql_test $(TEST_ARGS) -- --include-ignored
+
+.PHONY: test-sqlite
+test-sqlite:
+	@RUST_LOG=debug \
+	    cargo test --no-default-features --features=sqlite --lib --test \
+	    sqlite_test $(TEST_ARGS) -- --include-ignored
 
 .PHONY: clean
 clean:

@@ -15,6 +15,8 @@
 
 //! Integration tests for the database logger using the PostgreSQL backend.
 
+#![cfg(feature = "pgsql")]
+
 use db_logger::{pgsql, Connection};
 
 mod common;

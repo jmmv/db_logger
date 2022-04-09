@@ -26,11 +26,16 @@ use std::sync::Arc;
 mod clocks;
 pub(crate) mod logger;
 use crate::logger::LogEntry;
-pub mod pgsql;
 pub use logger::{DbLogger, Handle};
-pub mod sqlite;
 #[cfg(test)]
 mod testutils;
+
+#[cfg(not(any(feature = "pgsql", feature = "sqlite")))]
+compile_error!("one of the features ['pgsql', 'sqlite'] must be enabled");
+#[cfg(feature = "pgsql")]
+pub mod pgsql;
+#[cfg(feature = "sqlite")]
+pub mod sqlite;
 
 /// Opaque type representing a connection to the logging database.
 #[derive(Clone)]
