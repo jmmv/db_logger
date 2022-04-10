@@ -31,14 +31,21 @@ use tokio::sync::Semaphore;
 /// Schema to use to initialize the test database.
 const SCHEMA: &str = include_str!("../schemas/sqlite.sql");
 
+/// Options to establish a connection to an SQLite database.
+#[derive(Default)]
+pub struct ConnectionOptions {
+    /// URI of the database to connect to.
+    pub uri: String,
+}
+
 /// Factory to connect to a SQLite database.
-pub async fn connect(path: &str) -> Result<Connection> {
-    SqliteDb::connect(path).await.map(|db| Connection(Arc::from(db)))
+pub async fn connect(opts: ConnectionOptions) -> Result<Connection> {
+    SqliteDb::connect(opts).await.map(|db| Connection(Arc::from(db)))
 }
 
 /// Factory to connect to and initialize a SQLite test database.
-pub async fn setup_test(uri: &str) -> Connection {
-    Connection(Arc::from(SqliteDb::setup_test(uri).await))
+pub async fn setup_test(opts: ConnectionOptions) -> Connection {
+    Connection(Arc::from(SqliteDb::setup_test(opts).await))
 }
 
 /// Converts an `u64` from the in-memory model to an `i64` suitable for storage.
@@ -77,8 +84,8 @@ struct SqliteDb {
 
 impl SqliteDb {
     /// Creates a new connection based on environment variables and initializes its schema.
-    async fn connect(uri: &str) -> Result<Self> {
-        let pool = SqlitePool::connect(uri).await.map_err(|e| e.to_string())?;
+    async fn connect(opts: ConnectionOptions) -> Result<Self> {
+        let pool = SqlitePool::connect(&opts.uri).await.map_err(|e| e.to_string())?;
 
         // Serialize all transactions onto the SQLite database to avoid busy errors that we cannot
         // easily deal with during tests.
@@ -90,8 +97,8 @@ impl SqliteDb {
     }
 
     /// Creates a new connection to test database and initializes it.
-    async fn setup_test(uri: &str) -> Self {
-        let db = SqliteDb::connect(uri).await.unwrap();
+    async fn setup_test(opts: ConnectionOptions) -> Self {
+        let db = SqliteDb::connect(opts).await.unwrap();
         let mut tx = db.pool.begin().await.unwrap();
         {
             let mut results = sqlx::query(SCHEMA).execute_many(&mut tx).await;
@@ -208,7 +215,9 @@ mod tests {
     fn setup() -> Box<dyn testutils::TestContext> {
         let _can_fail = env_logger::builder().is_test(true).try_init();
 
-        let db = tokio::runtime::Runtime::new().unwrap().block_on(SqliteDb::setup_test(":memory:"));
+        let db = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(SqliteDb::setup_test(ConnectionOptions { uri: ":memory:".to_owned() }));
         Box::from(SqliteTestContext { db })
     }
 

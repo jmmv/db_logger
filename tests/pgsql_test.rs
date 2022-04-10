@@ -30,7 +30,7 @@ fn test_everything() {
     // running when we call it later.
     #[tokio::main]
     async fn prepare() -> Connection {
-        pgsql::setup_test().await
+        pgsql::setup_test(pgsql::ConnectionOptions::from_env("PGSQL_TEST").unwrap()).await
     }
     let db = prepare();
 
