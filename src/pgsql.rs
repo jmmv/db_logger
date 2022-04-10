@@ -31,20 +31,78 @@ use time::OffsetDateTime;
 /// Schema to use to initialize the test database.
 const SCHEMA: &str = include_str!("../schemas/pgsql.sql");
 
+/// Options to establish a connection to a PostgreSQL database.
+#[derive(Default)]
+#[cfg_attr(test, derive(PartialEq))]
+pub struct ConnectionOptions {
+    /// Host to connect to.
+    pub host: String,
+
+    /// Port to connect to (typically 5432).
+    pub port: u16,
+
+    /// Database name to connect to.
+    pub database: String,
+
+    /// Username to establish the connection with.
+    pub username: String,
+
+    /// Password to establish the connection with.
+    pub password: String,
+}
+
+#[cfg(test)]
+impl std::fmt::Debug for ConnectionOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectionOptions")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("database", &self.database)
+            .field("username", &self.username)
+            .field("password", &"scrubbed".to_owned())
+            .finish()
+    }
+}
+
+impl ConnectionOptions {
+    /// Initializes a set of options from environment variables whose name is prefixed with the
+    /// given `prefix`.
+    ///
+    /// This will use variables such as `<prefix>_HOST`, `<prefix>_PORT`, `<prefix>_DATABASE`,
+    /// `<prefix>_USERNAME` and `<prefix>_PASSWORD`.
+    pub fn from_env(prefix: &str) -> Result<ConnectionOptions> {
+        fn get_required_var(prefix: &str, suffix: &str) -> Result<String> {
+            let name = format!("{}_{}", prefix, suffix);
+            match env::var(&name) {
+                Ok(value) => Ok(value),
+                Err(env::VarError::NotPresent) => {
+                    Err(format!("Required environment variable {} not present", name))
+                }
+                Err(env::VarError::NotUnicode(_)) => {
+                    Err(format!("Invalid value in environment variable {}", name))
+                }
+            }
+        }
+        Ok(ConnectionOptions {
+            host: get_required_var(prefix, "HOST")?,
+            port: get_required_var(prefix, "PORT")?
+                .parse::<u16>()
+                .map_err(|e| format!("Invalid port number: {}", e))?,
+            database: get_required_var(prefix, "DATABASE")?,
+            username: get_required_var(prefix, "USERNAME")?,
+            password: get_required_var(prefix, "PASSWORD")?,
+        })
+    }
+}
+
 /// Factory to connect to a PostgreSQL database.
-pub fn connect_lazy(
-    host: &str,
-    port: u16,
-    database: &str,
-    username: &str,
-    password: &str,
-) -> Connection {
-    Connection(Arc::from(PostgresDb::connect_lazy(host, port, database, username, password)))
+pub fn connect_lazy(opts: ConnectionOptions) -> Connection {
+    Connection(Arc::from(PostgresDb::connect_lazy(opts)))
 }
 
 /// Factory to connect to and initialize a PostgreSQL test database.
-pub async fn setup_test() -> Connection {
-    let db = PostgresTestDb::setup_test().await;
+pub async fn setup_test(opts: ConnectionOptions) -> Connection {
+    let db = PostgresTestDb::setup_test(opts).await;
     Connection(Arc::from(db))
 }
 
@@ -65,14 +123,14 @@ struct PostgresDb {
 }
 
 impl PostgresDb {
-    /// Creates a new connection based on environment variables.
-    fn connect_lazy(host: &str, port: u16, database: &str, username: &str, password: &str) -> Self {
+    /// Creates a new connection based on the given options.
+    fn connect_lazy(opts: ConnectionOptions) -> Self {
         let options = PgConnectOptions::new()
-            .host(host)
-            .port(port)
-            .database(database)
-            .username(username)
-            .password(password);
+            .host(&opts.host)
+            .port(opts.port)
+            .database(&opts.database)
+            .username(&opts.username)
+            .password(&opts.password);
 
         Self {
             pool: PgPool::connect_lazy_with(options),
@@ -212,14 +270,8 @@ impl PostgresTestDb {
     /// be async but the `Drop` trait is not.
     ///
     /// As this is only for testing, any errors result in a panic.
-    async fn setup_test() -> Self {
-        let mut db = PostgresDb::connect_lazy(
-            &env::var("PGSQL_TEST_HOST").unwrap(),
-            env::var("PGSQL_TEST_PORT").unwrap().parse::<u16>().unwrap(),
-            &env::var("PGSQL_TEST_DATABASE").unwrap(),
-            &env::var("PGSQL_TEST_USERNAME").unwrap(),
-            &env::var("PGSQL_TEST_PASSWORD").unwrap(),
-        );
+    async fn setup_test(opts: ConnectionOptions) -> Self {
+        let mut db = PostgresDb::connect_lazy(opts);
 
         // Strip out comments from the schema so that we can safely separate the statements by
         // looking for semicolons.
@@ -290,6 +342,91 @@ mod tests {
     use super::*;
     use crate::testutils;
 
+    #[test]
+    fn test_connectionoptions_from_env_ok() {
+        let prefix = format!("TEST_{}", rand::random::<u32>());
+        env::set_var(format!("{}_HOST", prefix), "the-host");
+        env::set_var(format!("{}_PORT", prefix), "1234");
+        env::set_var(format!("{}_DATABASE", prefix), "the-database");
+        env::set_var(format!("{}_USERNAME", prefix), "the-username");
+        env::set_var(format!("{}_PASSWORD", prefix), "the-password");
+        let opts = ConnectionOptions::from_env(&prefix).unwrap();
+        assert_eq!(
+            ConnectionOptions {
+                host: "the-host".to_owned(),
+                port: 1234,
+                database: "the-database".to_owned(),
+                username: "the-username".to_owned(),
+                password: "the-password".to_owned(),
+            },
+            opts
+        );
+    }
+
+    /// Runs a test to validate that `ConnectionOptions::from_env` fails when the `missing`
+    /// environment variable is not set.
+    fn do_connectionoptions_from_env_missing_test(missing: &str) {
+        let prefix = format!("TEST_{}", rand::random::<u32>());
+        if missing != "HOST" {
+            env::set_var(format!("{}_HOST", prefix), "host");
+        }
+        if missing != "PORT" {
+            env::set_var(format!("{}_PORT", prefix), "5432");
+        }
+        if missing != "DATABASE" {
+            env::set_var(format!("{}_DATABASE", prefix), "database");
+        }
+        if missing != "USERNAME" {
+            env::set_var(format!("{}_USERNAME", prefix), "username");
+        }
+        if missing != "PASSWORD" {
+            env::set_var(format!("{}_PASSWORD", prefix), "password");
+        }
+        match ConnectionOptions::from_env(&prefix) {
+            Ok(_) => panic!("Should have failed"),
+            Err(e) => assert!(e.contains(&format!("{}_{} not present", prefix, missing))),
+        }
+    }
+
+    #[test]
+    fn test_connectionoptions_from_env_missing_host() {
+        do_connectionoptions_from_env_missing_test("HOST");
+    }
+
+    #[test]
+    fn test_connectionoptions_from_env_missing_port() {
+        do_connectionoptions_from_env_missing_test("PORT");
+    }
+
+    #[test]
+    fn test_connectionoptions_from_env_missing_database() {
+        do_connectionoptions_from_env_missing_test("DATABASE");
+    }
+
+    #[test]
+    fn test_connectionoptions_from_env_missing_username() {
+        do_connectionoptions_from_env_missing_test("USERNAME");
+    }
+
+    #[test]
+    fn test_connectionoptions_from_env_missing_password() {
+        do_connectionoptions_from_env_missing_test("PASSWORD");
+    }
+
+    #[test]
+    fn test_connectionoptions_from_env_invalid_port() {
+        let prefix = format!("TEST_{}", rand::random::<u32>());
+        env::set_var(format!("{}_HOST", prefix), "host");
+        env::set_var(format!("{}_PORT", prefix), "abc");
+        env::set_var(format!("{}_DATABASE", prefix), "database");
+        env::set_var(format!("{}_USERNAME", prefix), "username");
+        env::set_var(format!("{}_PASSWORD", prefix), "password");
+        match ConnectionOptions::from_env(&prefix) {
+            Ok(_) => panic!("Should have failed"),
+            Err(e) => assert!(e.contains("Invalid port number")),
+        }
+    }
+
     /// Test context to allow automatic cleanup of the test database.
     struct PostgresTestContext {
         db: PostgresTestDb,
@@ -308,7 +445,7 @@ mod tests {
 
         #[tokio::main]
         async fn prepare() -> PostgresTestDb {
-            PostgresTestDb::setup_test().await
+            PostgresTestDb::setup_test(ConnectionOptions::from_env("PGSQL_TEST").unwrap()).await
         }
         Box::from(PostgresTestContext { db: prepare() })
     }
