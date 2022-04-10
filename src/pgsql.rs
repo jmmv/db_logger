@@ -97,13 +97,12 @@ impl ConnectionOptions {
 
 /// Factory to connect to a PostgreSQL database.
 pub fn connect_lazy(opts: ConnectionOptions) -> Connection {
-    Connection(Arc::from(PostgresDb::connect_lazy(opts)))
+    Connection(Arc::from(PostgresDb::connect_lazy(opts, None)))
 }
 
 /// Factory to connect to and initialize a PostgreSQL test database.
 pub async fn setup_test(opts: ConnectionOptions) -> Connection {
-    let db = PostgresTestDb::setup_test(opts).await;
-    Connection(Arc::from(db))
+    Connection(Arc::from(PostgresTestDb::setup_test(opts).await))
 }
 
 /// Converts an `u32` from the in-memory model to an `i16` suitable for storage.
@@ -124,7 +123,7 @@ struct PostgresDb {
 
 impl PostgresDb {
     /// Creates a new connection based on the given options.
-    fn connect_lazy(opts: ConnectionOptions) -> Self {
+    fn connect_lazy(opts: ConnectionOptions, suffix: Option<u32>) -> Self {
         let options = PgConnectOptions::new()
             .host(&opts.host)
             .port(opts.port)
@@ -134,7 +133,7 @@ impl PostgresDb {
 
         Self {
             pool: PgPool::connect_lazy_with(options),
-            suffix: None,
+            suffix,
             log_sequence: Arc::from(AtomicU32::new(0)),
         }
     }
@@ -151,6 +150,24 @@ impl PostgresDb {
 
 #[async_trait::async_trait]
 impl Db for PostgresDb {
+    async fn create_schema(&self) -> Result<()> {
+        // Strip out comments from the schema so that we can safely separate the statements by
+        // looking for semicolons.
+        let schema = regex::RegexBuilder::new("--.*$")
+            .multi_line(true)
+            .build()
+            .map_err(|e| e.to_string())?
+            .replace_all(SCHEMA, "");
+
+        let schema = self.patch_query(&schema);
+
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        for query_str in schema.split(';') {
+            sqlx::query(query_str).execute(&mut tx).await.map_err(|e| e.to_string())?;
+        }
+        tx.commit().await.map_err(|e| e.to_string())
+    }
+
     async fn get_log_entries(&self) -> Result<Vec<String>> {
         let query_str = self.patch_query("SELECT * FROM logs ORDER BY timestamp, sequence");
         let mut rows = sqlx::query(&query_str).fetch(&self.pool);
@@ -271,25 +288,8 @@ impl PostgresTestDb {
     ///
     /// As this is only for testing, any errors result in a panic.
     async fn setup_test(opts: ConnectionOptions) -> Self {
-        let mut db = PostgresDb::connect_lazy(opts);
-
-        // Strip out comments from the schema so that we can safely separate the statements by
-        // looking for semicolons.
-        let schema = regex::RegexBuilder::new("--.*$")
-            .multi_line(true)
-            .build()
-            .unwrap()
-            .replace_all(SCHEMA, "");
-
-        db.suffix = Some(rand::random());
-        let schema = db.patch_query(&schema);
-
-        let mut tx = db.pool.begin().await.unwrap();
-        for query_str in schema.split(';') {
-            sqlx::query(query_str).execute(&mut tx).await.unwrap();
-        }
-        tx.commit().await.unwrap();
-
+        let db = PostgresDb::connect_lazy(opts, Some(rand::random()));
+        db.create_schema().await.unwrap();
         PostgresTestDb(db)
     }
 
@@ -328,6 +328,10 @@ impl Drop for PostgresTestDb {
 
 #[async_trait::async_trait]
 impl Db for PostgresTestDb {
+    async fn create_schema(&self) -> Result<()> {
+        self.0.create_schema().await
+    }
+
     async fn get_log_entries(&self) -> Result<Vec<String>> {
         self.0.get_log_entries().await
     }

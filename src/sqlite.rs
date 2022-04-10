@@ -43,11 +43,6 @@ pub async fn connect(opts: ConnectionOptions) -> Result<Connection> {
     SqliteDb::connect(opts).await.map(|db| Connection(Arc::from(db)))
 }
 
-/// Factory to connect to and initialize a SQLite test database.
-pub async fn setup_test(opts: ConnectionOptions) -> Connection {
-    Connection(Arc::from(SqliteDb::setup_test(opts).await))
-}
-
 /// Converts an `u64` from the in-memory model to an `i64` suitable for storage.
 fn u64_to_i64(field: &'static str, unsigned: u64) -> Result<i64> {
     if unsigned > i64::MAX as u64 {
@@ -95,24 +90,21 @@ impl SqliteDb {
 
         Ok(Self { pool, sem, log_sequence })
     }
-
-    /// Creates a new connection to test database and initializes it.
-    async fn setup_test(opts: ConnectionOptions) -> Self {
-        let db = SqliteDb::connect(opts).await.unwrap();
-        let mut tx = db.pool.begin().await.unwrap();
-        {
-            let mut results = sqlx::query(SCHEMA).execute_many(&mut tx).await;
-            while results.try_next().await.unwrap().is_some() {
-                // Nothing to do.
-            }
-        }
-        tx.commit().await.unwrap();
-        db
-    }
 }
 
 #[async_trait::async_trait]
 impl Db for SqliteDb {
+    async fn create_schema(&self) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        {
+            let mut results = sqlx::query(SCHEMA).execute_many(&mut tx).await;
+            while results.try_next().await.map_err(|e| e.to_string())?.is_some() {
+                // Nothing to do.
+            }
+        }
+        tx.commit().await.map_err(|e| e.to_string())
+    }
+
     async fn get_log_entries(&self) -> Result<Vec<String>> {
         let _permit = self.sem.clone().acquire_owned().await.expect("Semaphore prematurely closed");
 
@@ -215,10 +207,14 @@ mod tests {
     fn setup() -> Box<dyn testutils::TestContext> {
         let _can_fail = env_logger::builder().is_test(true).try_init();
 
-        let db = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(SqliteDb::setup_test(ConnectionOptions { uri: ":memory:".to_owned() }));
-        Box::from(SqliteTestContext { db })
+        #[tokio::main]
+        async fn prepare() -> SqliteDb {
+            let db =
+                SqliteDb::connect(ConnectionOptions { uri: ":memory:".to_owned() }).await.unwrap();
+            db.create_schema().await.unwrap();
+            db
+        }
+        Box::from(SqliteTestContext { db: prepare() })
     }
 
     #[test]
