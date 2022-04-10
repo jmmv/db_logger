@@ -212,10 +212,12 @@ fn env_rust_log() -> Level {
     }
 }
 
-/// Handle to maintain the `DbLogger`'s backing task alive.
+/// An opaque handler to maintain the logger's backing task alive.
 ///
-/// Once this object goes out of scope, the logger's persisting logic stops and any log messages
-/// emitted afterwards are not recorded.
+/// Once this object goes out of scope, the logger's database persisting logic stops and attempts
+/// to log may fail or get stuck.
+// TODO(jmmv): Modify integration tests to check what happens and possibly refactor this to *not*
+// expose this type at all.
 pub struct Handle {
     db: Connection,
     action_tx: mpsc::SyncSender<Action>,
@@ -251,7 +253,7 @@ impl Drop for Handle {
 ///
 /// There should only be one instance of this object, which is persisted in a global `Box` owned by
 /// the `log` crate.  As a result, this object gets never dropped.
-pub struct DbLogger {
+struct DbLogger {
     hostname: String,
     action_tx: mpsc::SyncSender<Action>,
     done_rx: Arc<Mutex<mpsc::Receiver<()>>>,
@@ -275,26 +277,6 @@ impl DbLogger {
 
         let done_rx = Arc::from(Mutex::from(done_rx));
         Self { hostname, action_tx, done_rx, clock }
-    }
-
-    /// Configures the global logger to use a new `DbLogger` instance backed by `db` and that
-    /// obtains timestamps from `clock`.
-    ///
-    /// Logger configuration happens via environment variables and tries to respect the same
-    /// variables that `env_logger` recognizes.  Misconfigured variables result in a fatal error.
-    pub fn init(db: Connection) -> Handle {
-        let max_level = env_rust_log();
-
-        let hostname =
-            gethostname().into_string().unwrap_or_else(|_e| String::from("invalid-hostname"));
-
-        let logger = DbLogger::new(hostname, db.clone(), Arc::from(SystemClock::default()));
-        let handle =
-            Handle { db, action_tx: logger.action_tx.clone(), done_rx: logger.done_rx.clone() };
-
-        log::set_boxed_logger(Box::from(logger)).expect("Logger should not have been set up yet");
-        log::set_max_level(max_level.to_level_filter());
-        handle
     }
 }
 
@@ -342,6 +324,25 @@ impl Log for DbLogger {
         self.action_tx.send(Action::Flush).unwrap();
         done_rx.recv().unwrap();
     }
+}
+
+/// Configures the global logger to use a new instance backed by the database connection `db`.
+///
+/// Logger configuration happens via environment variables and tries to respect the same
+/// variables that `env_logger` recognizes.  Misconfigured variables result in a fatal error.
+pub fn init(db: Connection) -> Handle {
+    let max_level = env_rust_log();
+
+    let hostname =
+        gethostname().into_string().unwrap_or_else(|_e| String::from("invalid-hostname"));
+
+    let logger = DbLogger::new(hostname, db.clone(), Arc::from(SystemClock::default()));
+    let handle =
+        Handle { db, action_tx: logger.action_tx.clone(), done_rx: logger.done_rx.clone() };
+
+    log::set_boxed_logger(Box::from(logger)).expect("Logger should not have been set up yet");
+    log::set_max_level(max_level.to_level_filter());
+    handle
 }
 
 #[cfg(test)]

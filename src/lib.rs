@@ -26,7 +26,7 @@ use std::sync::Arc;
 mod clocks;
 pub(crate) mod logger;
 use crate::logger::LogEntry;
-pub use logger::{DbLogger, Handle};
+pub use logger::{init, Handle};
 #[cfg(test)]
 mod testutils;
 
