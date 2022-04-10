@@ -23,7 +23,7 @@
 //! initialize it once here, which in turn limits the granularity of our tests.  We can only have
 //! a single `#[test]` to wrap the whole code in this file
 
-use db_logger::{Connection, DbLogger, Handle};
+use db_logger::{Connection, Handle};
 use gethostname::gethostname;
 use log::*;
 use std::env;
@@ -145,7 +145,7 @@ pub(crate) fn do_test_everything(test_name: &str, db: Connection) {
     #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
     async fn run_tests(test_name: &str, db: Connection) {
         env::set_var("RUST_LOG", "trace");
-        let handle = DbLogger::init(db);
+        let handle = db_logger::init(db);
 
         let mut logs_accumulator = vec![];
 
