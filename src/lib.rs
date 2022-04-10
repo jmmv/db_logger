@@ -41,12 +41,22 @@ pub mod sqlite;
 #[derive(Clone)]
 pub struct Connection(Arc<dyn Db + Send + Sync + 'static>);
 
+impl Connection {
+    /// Initializes the database schema.
+    pub async fn create_schema(&self) -> Result<()> {
+        self.0.create_schema().await
+    }
+}
+
 /// Result type for this library.
 pub(crate) type Result<T> = std::result::Result<T, String>;
 
 /// Abstraction over the database connection.
 #[async_trait::async_trait]
 pub(crate) trait Db {
+    /// Initializes the database schema.
+    async fn create_schema(&self) -> Result<()>;
+
     /// Returns the sorted list of all log entries in the database.
     ///
     /// Given that this is exposed for testing purposes only, this just returns a flat textual

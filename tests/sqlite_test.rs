@@ -30,10 +30,13 @@ fn test_everything() {
 
     #[tokio::main]
     async fn prepare(path: &Path) -> Connection {
-        sqlite::setup_test(sqlite::ConnectionOptions {
+        let db = sqlite::connect(sqlite::ConnectionOptions {
             uri: format!("file:{}?mode=rwc", path.display()),
         })
         .await
+        .unwrap();
+        db.create_schema().await.unwrap();
+        db
     }
     let db = prepare(&test_db);
 
