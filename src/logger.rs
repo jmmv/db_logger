@@ -83,21 +83,8 @@ enum Action {
 
 /// Writes all `entries` to the `db` in a single transaction.
 async fn write_all(db: Arc<dyn Db + Send + Sync + 'static>, entries: Vec<StaticLogEntry>) {
-    let mut tx = match db.begin().await {
-        Ok(tx) => tx,
-        Err(e) => {
-            eprintln!("Failed to open logging transaction: {}", e);
-            return;
-        }
-    };
-
-    if let Err(e) = tx.put_log_entries(entries).await {
+    if let Err(e) = db.put_log_entries(entries).await {
         eprintln!("Failed to write log entries: {}", e);
-        return;
-    }
-
-    if let Err(e) = tx.commit().await {
-        eprintln!("Failed to commit logging transaction: {}", e);
     }
 }
 
@@ -232,10 +219,7 @@ impl Handle {
     /// is for simplicity given that a `LogEntry` keeps references to static strings and we cannot
     /// obtain those from the database.
     pub async fn get_log_entries(&self) -> Result<Vec<String>> {
-        let mut tx = self.db.0.begin().await?;
-        let entries = tx.get_log_entries().await?;
-        tx.commit().await?;
-        Ok(entries)
+        self.db.0.get_log_entries().await
     }
 }
 
@@ -395,8 +379,7 @@ mod tests {
         emit_all_log_levels(&logger);
 
         logger.flush();
-        let mut tx = db.0.begin().await.unwrap();
-        let entries = tx.get_log_entries().await.unwrap();
+        let entries = db.0.get_log_entries().await.unwrap();
         assert_eq!(
             vec![
                 "1000.0 fake-hostname 1 the-module the-file:123 An error message".to_owned(),

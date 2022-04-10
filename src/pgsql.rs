@@ -19,10 +19,10 @@ use crate::logger::{
     LogEntry, LOG_ENTRY_MAX_FILENAME_LENGTH, LOG_ENTRY_MAX_HOSTNAME_LENGTH,
     LOG_ENTRY_MAX_MESSAGE_LENGTH, LOG_ENTRY_MAX_MODULE_LENGTH,
 };
-use crate::{truncate_option_str, Connection, Db, Result, Tx};
+use crate::{truncate_option_str, Connection, Db, Result};
 use futures::TryStreamExt;
-use sqlx::postgres::{PgConnectOptions, PgPool, Postgres};
-use sqlx::{Row, Transaction};
+use sqlx::postgres::{PgConnectOptions, PgPool};
+use sqlx::Row;
 use std::env;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -93,17 +93,107 @@ impl PostgresDb {
 
 #[async_trait::async_trait]
 impl Db for PostgresDb {
-    async fn begin<'a>(&'a self) -> Result<Box<dyn Tx<'a> + 'a + Send>> {
-        match self.pool.begin().await.map_err(|e| e.to_string()) {
-            Ok(tx) => {
-                return Ok(Box::from(PostgresTx {
-                    db: self,
-                    tx,
-                    log_sequence: self.log_sequence.clone(),
-                }))
-            }
-            Err(e) => return Err(e),
+    async fn get_log_entries(&self) -> Result<Vec<String>> {
+        let query_str = self.patch_query("SELECT * FROM logs ORDER BY timestamp, sequence");
+        let mut rows = sqlx::query(&query_str).fetch(&self.pool);
+        let mut entries = vec![];
+        while let Some(row) = rows.try_next().await.map_err(|e| e.to_string())? {
+            let timestamp: OffsetDateTime = row.try_get("timestamp").map_err(|e| e.to_string())?;
+            let hostname: String = row.try_get("hostname").map_err(|e| e.to_string())?;
+            let level: i16 = row.try_get("level").map_err(|e| e.to_string())?;
+            let module: Option<String> = row.try_get("module").map_err(|e| e.to_string())?;
+            let filename: Option<String> = row.try_get("filename").map_err(|e| e.to_string())?;
+            let line: Option<i16> = row.try_get("line").map_err(|e| e.to_string())?;
+            let message: String = row.try_get("message").map_err(|e| e.to_string())?;
+
+            entries.push(format!(
+                "{}.{} {} {} {} {}:{} {}",
+                timestamp.unix_timestamp(),
+                timestamp.unix_timestamp_nanos() % 1000000000,
+                hostname,
+                level,
+                module.as_deref().unwrap_or("NO-MODULE"),
+                filename.as_deref().unwrap_or("NO-FILENAME"),
+                line.unwrap_or(-1),
+                message
+            ))
         }
+        Ok(entries)
+    }
+
+    async fn put_log_entries(&self, entries: Vec<LogEntry<'_, '_>>) -> Result<()> {
+        let nentries = entries.len();
+        if nentries == 0 {
+            return Ok(());
+        }
+
+        if nentries > std::u32::MAX as usize {
+            return Err(format!(
+                "Cannot insert {} log entries at once; max is {}",
+                nentries,
+                std::u32::MAX
+            ));
+        }
+        let mut sequence = self.log_sequence.fetch_add(nentries as u32, Ordering::SeqCst);
+
+        let mut query_str = self.patch_query(
+            "INSERT INTO logs
+                (timestamp, sequence, hostname, level, module, filename, line, message)
+            VALUES ",
+        );
+        const NPARAMS: usize = 8;
+
+        let mut param: usize = 1;
+        for _ in 0..nentries {
+            if param > 1 {
+                query_str.push(',');
+            }
+            query_str.push('(');
+            for i in 1..NPARAMS + 1 {
+                if i == 1 {
+                    query_str += &format!("${}", param);
+                } else {
+                    query_str += &format!(", ${}", param);
+                }
+                param += 1;
+            }
+            query_str.push(')');
+        }
+
+        let mut query = sqlx::query(&query_str);
+        for mut entry in entries.into_iter() {
+            let module = truncate_option_str(entry.module, LOG_ENTRY_MAX_MODULE_LENGTH);
+            let filename = truncate_option_str(entry.filename, LOG_ENTRY_MAX_FILENAME_LENGTH);
+            entry.hostname.truncate(LOG_ENTRY_MAX_HOSTNAME_LENGTH);
+            entry.message.truncate(LOG_ENTRY_MAX_MESSAGE_LENGTH);
+
+            let line = match entry.line {
+                Some(n) => Some(u32_to_i16("line", n)?),
+                None => None,
+            };
+
+            query = query
+                .bind(entry.timestamp)
+                .bind(sequence)
+                .bind(entry.hostname)
+                .bind(entry.level as i16)
+                .bind(module)
+                .bind(filename)
+                .bind(line)
+                .bind(entry.message);
+
+            sequence += 1;
+        }
+
+        let done = query.execute(&self.pool).await.map_err(|e| e.to_string())?;
+        if done.rows_affected() as usize != nentries {
+            return Err(format!(
+                "Log entries insertion created {} rows but expected {}",
+                done.rows_affected(),
+                nentries
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -186,126 +276,12 @@ impl Drop for PostgresTestDb {
 
 #[async_trait::async_trait]
 impl Db for PostgresTestDb {
-    async fn begin<'a>(&'a self) -> Result<Box<dyn Tx<'a> + 'a + Send>> {
-        self.0.begin().await
-    }
-}
-
-/// A transaction backed by a PostgreSQL database.
-struct PostgresTx<'a> {
-    db: &'a PostgresDb,
-    tx: Transaction<'a, Postgres>,
-    log_sequence: Arc<AtomicU32>,
-}
-
-#[async_trait::async_trait]
-impl<'a> Tx<'a> for PostgresTx<'a> {
-    async fn commit(self: Box<Self>) -> Result<()> {
-        self.tx.commit().await.map_err(|e| e.to_string())?;
-        Ok(())
+    async fn get_log_entries(&self) -> Result<Vec<String>> {
+        self.0.get_log_entries().await
     }
 
-    async fn get_log_entries(&mut self) -> Result<Vec<String>> {
-        let query_str = self.db.patch_query("SELECT * FROM logs ORDER BY timestamp, sequence");
-        let mut rows = sqlx::query(&query_str).fetch(&mut self.tx);
-        let mut entries = vec![];
-        while let Some(row) = rows.try_next().await.map_err(|e| e.to_string())? {
-            let timestamp: OffsetDateTime = row.try_get("timestamp").map_err(|e| e.to_string())?;
-            let hostname: String = row.try_get("hostname").map_err(|e| e.to_string())?;
-            let level: i16 = row.try_get("level").map_err(|e| e.to_string())?;
-            let module: Option<String> = row.try_get("module").map_err(|e| e.to_string())?;
-            let filename: Option<String> = row.try_get("filename").map_err(|e| e.to_string())?;
-            let line: Option<i16> = row.try_get("line").map_err(|e| e.to_string())?;
-            let message: String = row.try_get("message").map_err(|e| e.to_string())?;
-
-            entries.push(format!(
-                "{}.{} {} {} {} {}:{} {}",
-                timestamp.unix_timestamp(),
-                timestamp.unix_timestamp_nanos() % 1000000000,
-                hostname,
-                level,
-                module.as_deref().unwrap_or("NO-MODULE"),
-                filename.as_deref().unwrap_or("NO-FILENAME"),
-                line.unwrap_or(-1),
-                message
-            ))
-        }
-        Ok(entries)
-    }
-
-    async fn put_log_entries(&mut self, entries: Vec<LogEntry<'_, '_>>) -> Result<()> {
-        let nentries = entries.len();
-        if nentries == 0 {
-            return Ok(());
-        }
-
-        if nentries > std::u32::MAX as usize {
-            return Err(format!(
-                "Cannot insert {} log entries at once; max is {}",
-                nentries,
-                std::u32::MAX
-            ));
-        }
-        let mut sequence = self.log_sequence.fetch_add(nentries as u32, Ordering::SeqCst);
-
-        let mut query_str = self.db.patch_query(
-            "INSERT INTO logs
-                (timestamp, sequence, hostname, level, module, filename, line, message)
-            VALUES ",
-        );
-        const NPARAMS: usize = 8;
-
-        let mut param: usize = 1;
-        for _ in 0..nentries {
-            if param > 1 {
-                query_str.push(',');
-            }
-            query_str.push('(');
-            for i in 1..NPARAMS + 1 {
-                if i == 1 {
-                    query_str += &format!("${}", param);
-                } else {
-                    query_str += &format!(", ${}", param);
-                }
-                param += 1;
-            }
-            query_str.push(')');
-        }
-
-        let mut query = sqlx::query(&query_str);
-        for mut entry in entries.into_iter() {
-            let module = truncate_option_str(entry.module, LOG_ENTRY_MAX_MODULE_LENGTH);
-            let filename = truncate_option_str(entry.filename, LOG_ENTRY_MAX_FILENAME_LENGTH);
-            entry.hostname.truncate(LOG_ENTRY_MAX_HOSTNAME_LENGTH);
-            entry.message.truncate(LOG_ENTRY_MAX_MESSAGE_LENGTH);
-
-            let line = match entry.line {
-                Some(n) => Some(u32_to_i16("line", n)?),
-                None => None,
-            };
-
-            query = query
-                .bind(entry.timestamp)
-                .bind(sequence)
-                .bind(entry.hostname)
-                .bind(entry.level as i16)
-                .bind(module)
-                .bind(filename)
-                .bind(line)
-                .bind(entry.message);
-
-            sequence += 1;
-        }
-
-        let done = query.execute(&mut self.tx).await.map_err(|e| e.to_string())?;
-        if done.rows_affected() as usize != nentries {
-            return Err(format!(
-                "Log entries insertion created {} rows but expected {}",
-                done.rows_affected(),
-                nentries
-            ));
-        }
-        Ok(())
+    async fn put_log_entries(&self, entries: Vec<LogEntry<'_, '_>>) -> Result<()> {
+        self.0.put_log_entries(entries).await
     }
 }
 
@@ -321,12 +297,8 @@ mod tests {
 
     #[async_trait::async_trait]
     impl testutils::TestContext for PostgresTestContext {
-        fn db(&self) -> Box<dyn Db + Send + Sync> {
-            Box::from(self.db.clone())
-        }
-
-        async fn tx<'a>(&'a mut self) -> Box<dyn Tx<'a> + 'a + Send> {
-            self.db.begin().await.unwrap()
+        fn db(&self) -> &(dyn Db + Send + Sync) {
+            &self.db
         }
     }
 

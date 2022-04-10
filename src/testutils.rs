@@ -19,25 +19,22 @@ use crate::logger::{
     LogEntry, LOG_ENTRY_MAX_FILENAME_LENGTH, LOG_ENTRY_MAX_HOSTNAME_LENGTH,
     LOG_ENTRY_MAX_MESSAGE_LENGTH, LOG_ENTRY_MAX_MODULE_LENGTH,
 };
-use crate::{Db, Tx};
+use crate::Db;
 use time::OffsetDateTime;
 
 /// Context to parameterize the tests depending on the backing database.
 ///
 /// Implementations of this trait can also implement `Drop` to perform cleanup operations at the
 /// end of each test.
-#[async_trait::async_trait]
 pub(crate) trait TestContext {
-    fn db(&self) -> Box<dyn Db + Send + Sync>;
-    async fn tx<'a>(&'a mut self) -> Box<dyn Tx<'a> + 'a + Send>;
+    fn db(&self) -> &(dyn Db + Send + Sync);
 }
 
 pub(crate) fn test_log_entries_none(mut context: Box<dyn TestContext>) {
     #[tokio::main]
     async fn run(context: &mut dyn TestContext) {
-        let mut tx = context.tx().await;
-        tx.put_log_entries(vec![]).await.unwrap();
-        assert!(tx.get_log_entries().await.unwrap().is_empty());
+        context.db().put_log_entries(vec![]).await.unwrap();
+        assert!(context.db().get_log_entries().await.unwrap().is_empty());
     }
     run(context.as_mut());
 }
@@ -45,8 +42,6 @@ pub(crate) fn test_log_entries_none(mut context: Box<dyn TestContext>) {
 pub(crate) fn test_log_entries_individual(mut context: Box<dyn TestContext>) {
     #[tokio::main]
     async fn run(context: &mut dyn TestContext) {
-        let mut tx = context.tx().await;
-
         let entry1 = LogEntry {
             timestamp: OffsetDateTime::from_unix_timestamp_nanos(1_000_001_001),
             hostname: "fake-host1".to_owned(),
@@ -56,7 +51,7 @@ pub(crate) fn test_log_entries_individual(mut context: Box<dyn TestContext>) {
             line: None,
             message: "Entry without optional fields".to_owned(),
         };
-        tx.put_log_entries(vec![entry1]).await.unwrap();
+        context.db().put_log_entries(vec![entry1]).await.unwrap();
 
         let entry2 = LogEntry {
             timestamp: OffsetDateTime::from_unix_timestamp_nanos(12_345_000_006_000),
@@ -67,13 +62,13 @@ pub(crate) fn test_log_entries_individual(mut context: Box<dyn TestContext>) {
             line: Some(42),
             message: "Entry with optional fields".to_owned(),
         };
-        tx.put_log_entries(vec![entry2]).await.unwrap();
+        context.db().put_log_entries(vec![entry2]).await.unwrap();
 
         let exp_entries = vec![
             "1.2000 fake-host1 1 NO-MODULE NO-FILENAME:-1 Entry without optional fields".to_owned(),
             "12345.6000 fake-host2 3 the-module the-file:42 Entry with optional fields".to_owned(),
         ];
-        assert_eq!(exp_entries, tx.get_log_entries().await.unwrap());
+        assert_eq!(exp_entries, context.db().get_log_entries().await.unwrap());
     }
     run(context.as_mut());
 }
@@ -81,8 +76,6 @@ pub(crate) fn test_log_entries_individual(mut context: Box<dyn TestContext>) {
 pub(crate) fn test_log_entries_combined(mut context: Box<dyn TestContext>) {
     #[tokio::main]
     async fn run(context: &mut dyn TestContext) {
-        let mut tx = context.tx().await;
-
         let entry1 = LogEntry {
             timestamp: OffsetDateTime::from_unix_timestamp_nanos(1_000_001_500),
             hostname: "fake-host1".to_owned(),
@@ -103,21 +96,19 @@ pub(crate) fn test_log_entries_combined(mut context: Box<dyn TestContext>) {
             message: "Entry with optional fields".to_owned(),
         };
 
-        tx.put_log_entries(vec![entry1, entry2]).await.unwrap();
+        context.db().put_log_entries(vec![entry1, entry2]).await.unwrap();
 
         let exp_entries = vec![
             "1.2000 fake-host1 1 NO-MODULE NO-FILENAME:-1 Entry without optional fields".to_owned(),
             "12345.7000 fake-host2 3 the-module the-file:42 Entry with optional fields".to_owned(),
         ];
-        assert_eq!(exp_entries, tx.get_log_entries().await.unwrap());
+        assert_eq!(exp_entries, context.db().get_log_entries().await.unwrap());
     }
     run(context.as_mut());
 }
 pub(crate) fn test_log_entries_long_strings(mut context: Box<dyn TestContext>) {
     #[tokio::main]
     async fn run(context: &mut dyn TestContext) {
-        let mut tx = context.tx().await;
-
         let mut long_string = String::with_capacity(5000);
         for i in 0..long_string.capacity() {
             long_string.push((b'0' + ((i % 10) as u8)) as char);
@@ -132,7 +123,7 @@ pub(crate) fn test_log_entries_long_strings(mut context: Box<dyn TestContext>) {
             line: None,
             message: long_string.to_owned(),
         };
-        tx.put_log_entries(vec![entry]).await.unwrap();
+        context.db().put_log_entries(vec![entry]).await.unwrap();
 
         let truncated_hostname = &long_string[0..LOG_ENTRY_MAX_HOSTNAME_LENGTH];
         let truncated_module = &long_string[0..LOG_ENTRY_MAX_MODULE_LENGTH];
@@ -143,7 +134,7 @@ pub(crate) fn test_log_entries_long_strings(mut context: Box<dyn TestContext>) {
             "0.0 {} 5 {} {}:-1 {}",
             truncated_hostname, truncated_module, truncated_filename, truncated_message
         )];
-        assert_eq!(exp_entries, tx.get_log_entries().await.unwrap());
+        assert_eq!(exp_entries, context.db().get_log_entries().await.unwrap());
     }
     run(context.as_mut());
 }
