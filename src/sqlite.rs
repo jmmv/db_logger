@@ -19,14 +19,14 @@ use crate::logger::{
     LogEntry, LOG_ENTRY_MAX_FILENAME_LENGTH, LOG_ENTRY_MAX_HOSTNAME_LENGTH,
     LOG_ENTRY_MAX_MESSAGE_LENGTH, LOG_ENTRY_MAX_MODULE_LENGTH,
 };
-use crate::{truncate_option_str, Connection, Db, Result, Tx};
+use crate::{truncate_option_str, Connection, Db, Result};
 use futures::TryStreamExt;
-use sqlx::sqlite::{Sqlite, SqlitePool};
-use sqlx::{Row, Transaction};
+use sqlx::sqlite::SqlitePool;
+use sqlx::Row;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use time::OffsetDateTime;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::Semaphore;
 
 /// Schema to use to initialize the test database.
 const SCHEMA: &str = include_str!("../schemas/sqlite.sql");
@@ -106,30 +106,11 @@ impl SqliteDb {
 
 #[async_trait::async_trait]
 impl Db for SqliteDb {
-    async fn begin<'a>(&'a self) -> Result<Box<dyn Tx<'a> + 'a + Send>> {
-        let permit = self.sem.clone().acquire_owned().await.expect("Semaphore prematurely closed");
-        let tx = self.pool.begin().await.map_err(|e| e.to_string())?;
-        Ok(Box::from(SqliteTx { tx, _permit: permit, log_sequence: self.log_sequence.clone() }))
-    }
-}
+    async fn get_log_entries(&self) -> Result<Vec<String>> {
+        let _permit = self.sem.clone().acquire_owned().await.expect("Semaphore prematurely closed");
 
-/// A transaction backed by a SQLite database.
-struct SqliteTx<'a> {
-    tx: Transaction<'a, Sqlite>,
-    _permit: OwnedSemaphorePermit,
-    log_sequence: Arc<AtomicU64>,
-}
-
-#[async_trait::async_trait]
-impl<'a> Tx<'a> for SqliteTx<'a> {
-    async fn commit(self: Box<Self>) -> Result<()> {
-        self.tx.commit().await.map_err(|e| e.to_string())?;
-        Ok(())
-    }
-
-    async fn get_log_entries(&mut self) -> Result<Vec<String>> {
         let query_str = "SELECT * FROM logs ORDER BY timestamp_secs, timestamp_nsecs, sequence";
-        let mut rows = sqlx::query(query_str).fetch(&mut self.tx);
+        let mut rows = sqlx::query(query_str).fetch(&self.pool);
         let mut entries = vec![];
         while let Some(row) = rows.try_next().await.map_err(|e| e.to_string())? {
             let timestamp_secs: i64 = row.try_get("timestamp_secs").map_err(|e| e.to_string())?;
@@ -156,7 +137,9 @@ impl<'a> Tx<'a> for SqliteTx<'a> {
         Ok(entries)
     }
 
-    async fn put_log_entries(&mut self, entries: Vec<LogEntry<'_, '_>>) -> Result<()> {
+    async fn put_log_entries(&self, entries: Vec<LogEntry<'_, '_>>) -> Result<()> {
+        let _permit = self.sem.clone().acquire_owned().await.expect("Semaphore prematurely closed");
+
         let mut sequence = self.log_sequence.fetch_add(entries.len() as u64, Ordering::SeqCst);
 
         let query_str = "
@@ -164,6 +147,9 @@ impl<'a> Tx<'a> for SqliteTx<'a> {
                 (timestamp_secs, timestamp_nsecs, sequence, hostname,
                     level, module, filename, line, message)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+
+        // Using a transaction is critical for good SQLite write performance.
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
 
         // This implementation is not very efficient but it is straightforward, which is
         // intentional given that this is only used for testing.
@@ -187,7 +173,7 @@ impl<'a> Tx<'a> for SqliteTx<'a> {
                 .bind(filename)
                 .bind(entry.line)
                 .bind(entry.message)
-                .execute(&mut self.tx)
+                .execute(&mut tx)
                 .await
                 .map_err(|e| e.to_string())?;
             if done.rows_affected() != 1 {
@@ -196,7 +182,8 @@ impl<'a> Tx<'a> for SqliteTx<'a> {
 
             sequence += 1;
         }
-        Ok(())
+
+        tx.commit().await.map_err(|e| e.to_string())
     }
 }
 
@@ -212,12 +199,8 @@ mod tests {
 
     #[async_trait::async_trait]
     impl testutils::TestContext for SqliteTestContext {
-        fn db(&self) -> Box<dyn Db + Send + Sync> {
-            Box::from(self.db.clone())
-        }
-
-        async fn tx<'a>(&'a mut self) -> Box<dyn Tx<'a> + 'a + Send> {
-            self.db.begin().await.unwrap()
+        fn db(&self) -> &(dyn Db + Send + Sync) {
+            &self.db
         }
     }
 
