@@ -53,7 +53,7 @@ fn u64_to_i64(field: &'static str, unsigned: u64) -> Result<i64> {
 
 /// Converts a timestamp into the seconds and nanoseconds pair needed by the database.
 ///
-/// Nanoseconds are rounded to the next microsecond to emulate the behavior of the `pgsql`
+/// Nanoseconds are rounded to the next microsecond to emulate the behavior of the `postgres`
 /// implementation.
 fn unpack_timestamp(ts: OffsetDateTime) -> (i64, i64) {
     let nanos = ts.unix_timestamp_nanos();

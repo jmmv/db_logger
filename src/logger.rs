@@ -47,7 +47,7 @@ const MAX_FLUSH_DELAY_SECS: u64 = 5;
 const DEFAULT_LOG_LEVEL: Level = Level::Warn;
 
 // Maximum sizes of the corresponding fields in the schema.
-// TODO(jmmv): We should not impose the restrictions of one backend (pgsql) on others (sqlite).
+// TODO(jmmv): We should not impose the restrictions of one backend (postgres) on others (sqlite).
 pub(crate) const LOG_ENTRY_MAX_HOSTNAME_LENGTH: usize = 64;
 pub(crate) const LOG_ENTRY_MAX_MODULE_LENGTH: usize = 64;
 pub(crate) const LOG_ENTRY_MAX_FILENAME_LENGTH: usize = 256;

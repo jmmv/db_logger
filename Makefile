@@ -24,23 +24,23 @@ test: test-default
 .PHONY: test-default
 test-default:
 	@RUST_LOG=debug \
-	    PGSQL_TEST_HOST="$(PGSQL_TEST_HOST)" \
-	    PGSQL_TEST_PORT="$(PGSQL_TEST_PORT)" \
-	    PGSQL_TEST_DATABASE="$(PGSQL_TEST_DATABASE)" \
-	    PGSQL_TEST_USERNAME="$(PGSQL_TEST_USERNAME)" \
-	    PGSQL_TEST_PASSWORD="$(PGSQL_TEST_PASSWORD)" \
+	    POSTGRES_TEST_HOST="$(POSTGRES_TEST_HOST)" \
+	    POSTGRES_TEST_PORT="$(POSTGRES_TEST_PORT)" \
+	    POSTGRES_TEST_DATABASE="$(POSTGRES_TEST_DATABASE)" \
+	    POSTGRES_TEST_USERNAME="$(POSTGRES_TEST_USERNAME)" \
+	    POSTGRES_TEST_PASSWORD="$(POSTGRES_TEST_PASSWORD)" \
 	    cargo test $(TEST_ARGS) -- --include-ignored
 
-.PHONY: test-pgsql
-test-pgsql:
+.PHONY: test-postgres
+test-postgres:
 	@RUST_LOG=debug \
-	    PGSQL_TEST_HOST="$(PGSQL_TEST_HOST)" \
-	    PGSQL_TEST_PORT="$(PGSQL_TEST_PORT)" \
-	    PGSQL_TEST_DATABASE="$(PGSQL_TEST_DATABASE)" \
-	    PGSQL_TEST_USERNAME="$(PGSQL_TEST_USERNAME)" \
-	    PGSQL_TEST_PASSWORD="$(PGSQL_TEST_PASSWORD)" \
-	    cargo test --no-default-features --features=pgsql --lib --test \
-	    pgsql_test $(TEST_ARGS) -- --include-ignored
+	    POSTGRES_TEST_HOST="$(POSTGRES_TEST_HOST)" \
+	    POSTGRES_TEST_PORT="$(POSTGRES_TEST_PORT)" \
+	    POSTGRES_TEST_DATABASE="$(POSTGRES_TEST_DATABASE)" \
+	    POSTGRES_TEST_USERNAME="$(POSTGRES_TEST_USERNAME)" \
+	    POSTGRES_TEST_PASSWORD="$(POSTGRES_TEST_PASSWORD)" \
+	    cargo test --no-default-features --features=postgres --lib --test \
+	    postgres_test $(TEST_ARGS) -- --include-ignored
 
 .PHONY: test-sqlite
 test-sqlite:

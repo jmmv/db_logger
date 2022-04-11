@@ -15,9 +15,9 @@
 
 //! Integration tests for the database logger using the PostgreSQL backend.
 
-#![cfg(feature = "pgsql")]
+#![cfg(feature = "postgres")]
 
-use db_logger::{pgsql, Connection};
+use db_logger::{postgres, Connection};
 
 mod common;
 
@@ -30,11 +30,11 @@ fn test_everything() {
     // running when we call it later.
     #[tokio::main]
     async fn prepare() -> Connection {
-        pgsql::setup_test(pgsql::ConnectionOptions::from_env("PGSQL_TEST").unwrap()).await
+        postgres::setup_test(postgres::ConnectionOptions::from_env("POSTGRES_TEST").unwrap()).await
     }
     let db = prepare();
 
-    common::do_test_everything("pgsql_test", db.clone());
+    common::do_test_everything("postgres_test", db.clone());
 
     // We don't have to explicitly drop `db` here, but this is to clarify that this is where
     // cleaning up the test database happens.
