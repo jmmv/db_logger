@@ -31,6 +31,39 @@ use time::OffsetDateTime;
 /// Schema to use to initialize the test database.
 const SCHEMA: &str = include_str!("../schemas/postgres.sql");
 
+/// Removes SQL-style comments from `input`.
+///
+/// Useful to pre-process `SCHEMA` before splitting it into separate statements.
+fn strip_sql_comments(input: &str) -> String {
+    let mut output = String::new();
+    let mut comment = 0;
+    for ch in input.chars() {
+        assert!(comment <= 2);
+        match ch {
+            '\r' => (),
+            '\n' => {
+                if comment == 1 {
+                    output.push('-');
+                }
+                comment = 0;
+                output.push('\n');
+            }
+            _ if comment == 2 => (),
+            '-' if comment < 2 => comment += 1,
+            ch => {
+                if comment == 1 {
+                    output.push('-');
+                } else if comment == 2 {
+                    output.push_str("--");
+                }
+                comment = 0;
+                output.push(ch);
+            }
+        }
+    }
+    output
+}
+
 /// Options to establish a connection to a PostgreSQL database.
 #[derive(Default)]
 #[cfg_attr(test, derive(PartialEq))]
@@ -151,15 +184,7 @@ impl PostgresDb {
 #[async_trait::async_trait]
 impl Db for PostgresDb {
     async fn create_schema(&self) -> Result<()> {
-        // Strip out comments from the schema so that we can safely separate the statements by
-        // looking for semicolons.
-        let schema = regex::RegexBuilder::new("--.*$")
-            .multi_line(true)
-            .build()
-            .map_err(|e| e.to_string())?
-            .replace_all(SCHEMA, "");
-
-        let schema = self.patch_query(&schema);
+        let schema = self.patch_query(&strip_sql_comments(SCHEMA));
 
         let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
         for query_str in schema.split(';') {
@@ -345,6 +370,13 @@ impl Db for PostgresTestDb {
 mod tests {
     use super::*;
     use crate::testutils;
+
+    #[test]
+    fn test_strip_sql_comments() {
+        let input = "first line\nsecond - line\n-third-line-is-here-\nfourth--li--ne\nfifth -- \nx";
+        let exp_output = "first line\nsecond - line\n-third-line-is-here-\nfourth\nfifth \nx";
+        assert_eq!(exp_output, &strip_sql_comments(input));
+    }
 
     #[test]
     fn test_connectionoptions_from_env_ok() {
