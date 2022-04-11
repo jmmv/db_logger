@@ -48,6 +48,10 @@ test-sqlite:
 	    cargo test --no-default-features --features=sqlite --lib --test \
 	    sqlite_test $(TEST_ARGS) -- --include-ignored
 
+.PHONY: lint
+lint:
+	@./.github/workflows/lint.sh
+
 .PHONY: clean
 clean:
 	@true

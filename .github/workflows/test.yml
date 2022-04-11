@@ -30,7 +30,9 @@ jobs:
                   default: true
                   components: clippy, rustfmt
             - uses: actions/checkout@v2
-            - run: ./.github/workflows/lint.sh
+            - run: rustup component add clippy
+            - run: rustup component add rustfmt
+            - run: make lint
 
     features-default:
         runs-on: ubuntu-latest
