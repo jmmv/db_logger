@@ -12,8 +12,8 @@ edition = "2018"
 publish = false
 
 [features]
-default = ["pgsql", "sqlite"]
-pgsql = ["sqlx/postgres"]
+default = ["postgres", "sqlite"]
+postgres = ["sqlx/postgres"]
 sqlite = ["sqlx/sqlite"]
 
 [dependencies]

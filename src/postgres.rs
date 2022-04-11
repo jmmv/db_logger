@@ -29,7 +29,7 @@ use std::sync::Arc;
 use time::OffsetDateTime;
 
 /// Schema to use to initialize the test database.
-const SCHEMA: &str = include_str!("../schemas/pgsql.sql");
+const SCHEMA: &str = include_str!("../schemas/postgres.sql");
 
 /// Options to establish a connection to a PostgreSQL database.
 #[derive(Default)]
@@ -449,7 +449,7 @@ mod tests {
 
         #[tokio::main]
         async fn prepare() -> PostgresTestDb {
-            PostgresTestDb::setup_test(ConnectionOptions::from_env("PGSQL_TEST").unwrap()).await
+            PostgresTestDb::setup_test(ConnectionOptions::from_env("POSTGRES_TEST").unwrap()).await
         }
         Box::from(PostgresTestContext { db: prepare() })
     }

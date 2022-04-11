@@ -30,10 +30,10 @@ pub use logger::{init, Handle};
 #[cfg(test)]
 mod testutils;
 
-#[cfg(not(any(feature = "pgsql", feature = "sqlite")))]
-compile_error!("one of the features ['pgsql', 'sqlite'] must be enabled");
-#[cfg(feature = "pgsql")]
-pub mod pgsql;
+#[cfg(not(any(feature = "postgres", feature = "sqlite")))]
+compile_error!("one of the features ['postgres', 'sqlite'] must be enabled");
+#[cfg(feature = "postgres")]
+pub mod postgres;
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
 

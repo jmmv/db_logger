@@ -35,26 +35,26 @@ jobs:
     features-default:
         runs-on: ubuntu-latest
         env:
-            PGSQL_TEST_HOST: ${{ secrets.PGSQL_TEST_HOST }}
-            PGSQL_TEST_PORT: ${{ secrets.PGSQL_TEST_PORT }}
-            PGSQL_TEST_DATABASE: ${{ secrets.PGSQL_TEST_DATABASE }}
-            PGSQL_TEST_USERNAME: ${{ secrets.PGSQL_TEST_USERNAME }}
-            PGSQL_TEST_PASSWORD: ${{ secrets.PGSQL_TEST_PASSWORD }}
+            POSTGRES_TEST_HOST: ${{ secrets.POSTGRES_TEST_HOST }}
+            POSTGRES_TEST_PORT: ${{ secrets.POSTGRES_TEST_PORT }}
+            POSTGRES_TEST_DATABASE: ${{ secrets.POSTGRES_TEST_DATABASE }}
+            POSTGRES_TEST_USERNAME: ${{ secrets.POSTGRES_TEST_USERNAME }}
+            POSTGRES_TEST_PASSWORD: ${{ secrets.POSTGRES_TEST_PASSWORD }}
         steps:
             - uses: actions/checkout@v2
             - run: make test
 
-    features-pgsql:
+    features-postgres:
         runs-on: ubuntu-latest
         env:
-            PGSQL_TEST_HOST: ${{ secrets.PGSQL_TEST_HOST }}
-            PGSQL_TEST_PORT: ${{ secrets.PGSQL_TEST_PORT }}
-            PGSQL_TEST_DATABASE: ${{ secrets.PGSQL_TEST_DATABASE }}
-            PGSQL_TEST_USERNAME: ${{ secrets.PGSQL_TEST_USERNAME }}
-            PGSQL_TEST_PASSWORD: ${{ secrets.PGSQL_TEST_PASSWORD }}
+            POSTGRES_TEST_HOST: ${{ secrets.POSTGRES_TEST_HOST }}
+            POSTGRES_TEST_PORT: ${{ secrets.POSTGRES_TEST_PORT }}
+            POSTGRES_TEST_DATABASE: ${{ secrets.POSTGRES_TEST_DATABASE }}
+            POSTGRES_TEST_USERNAME: ${{ secrets.POSTGRES_TEST_USERNAME }}
+            POSTGRES_TEST_PASSWORD: ${{ secrets.POSTGRES_TEST_PASSWORD }}
         steps:
             - uses: actions/checkout@v2
-            - run: make test-pgsql
+            - run: make test-postgres
 
     features-sqlite:
         runs-on: ubuntu-latest
