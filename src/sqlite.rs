@@ -23,6 +23,7 @@ use crate::{truncate_option_str, Connection, Db, Result};
 use futures::TryStreamExt;
 use sqlx::sqlite::SqlitePool;
 use sqlx::Row;
+use std::convert::TryFrom;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use time::OffsetDateTime;
@@ -43,19 +44,11 @@ pub async fn connect(opts: ConnectionOptions) -> Result<Connection> {
     SqliteDb::connect(opts).await.map(|db| Connection(Arc::from(db)))
 }
 
-/// Converts an `u64` from the in-memory model to an `i64` suitable for storage.
-fn u64_to_i64(field: &'static str, unsigned: u64) -> Result<i64> {
-    if unsigned > i64::MAX as u64 {
-        return Err(format!("{} ({}) is too large for i64", field, unsigned));
-    }
-    Ok(unsigned as i64)
-}
-
 /// Converts a timestamp into the seconds and nanoseconds pair needed by the database.
 ///
 /// Nanoseconds are rounded to the next microsecond to emulate the behavior of the `postgres`
 /// implementation.
-fn unpack_timestamp(ts: OffsetDateTime) -> (i64, i64) {
+fn unpack_timestamp(ts: OffsetDateTime) -> Result<(i64, i64)> {
     let nanos = ts.unix_timestamp_nanos();
 
     let nanos_only = nanos % 1000;
@@ -64,9 +57,9 @@ fn unpack_timestamp(ts: OffsetDateTime) -> (i64, i64) {
         nanos += 1000;
     }
 
-    let sec = (nanos / 1_000_000_000) as i64;
-    let nsec = (nanos % 1_000_000_000) as i64;
-    (sec, nsec)
+    let sec = i64::try_from(nanos / 1_000_000_000).map_err(|_| "timestamp too large".to_owned())?;
+    let nsec = i64::try_from(nanos % 1_000_000_000).expect("nanos must fit in i64");
+    Ok((sec, nsec))
 }
 
 /// A database instance backed by an SQLite database.
@@ -137,19 +130,13 @@ impl Db for SqliteDb {
     }
 
     async fn put_log_entries(&self, entries: Vec<LogEntry<'_, '_>>) -> Result<()> {
-        let nentries = entries.len();
+        let nentries = u64::try_from(entries.len())
+            .map_err(|e| format!("Cannot insert {} log entries at once: {}", entries.len(), e))?;
         if nentries == 0 {
             return Ok(());
         }
 
-        if nentries > std::u64::MAX as usize {
-            return Err(format!(
-                "Cannot insert {} log entries at once; max is {}",
-                nentries,
-                std::u64::MAX
-            ));
-        }
-        let mut sequence = self.log_sequence.fetch_add(nentries as u64, Ordering::SeqCst);
+        let mut sequence = self.log_sequence.fetch_add(nentries, Ordering::SeqCst);
 
         let mut query_str = "
             INSERT INTO logs
@@ -178,14 +165,14 @@ impl Db for SqliteDb {
             entry.hostname.truncate(LOG_ENTRY_MAX_HOSTNAME_LENGTH);
             entry.message.truncate(LOG_ENTRY_MAX_MESSAGE_LENGTH);
 
-            let (timestamp_secs, timestamp_nsecs) = unpack_timestamp(entry.timestamp);
+            let (timestamp_secs, timestamp_nsecs) = unpack_timestamp(entry.timestamp)?;
 
             query = query
                 .bind(timestamp_secs)
                 .bind(timestamp_nsecs)
-                .bind(u64_to_i64("sequence", sequence)?)
+                .bind(i64::try_from(sequence).map_err(|_| "sequence out of range".to_owned())?)
                 .bind(entry.hostname)
-                .bind(entry.level as u8)
+                .bind(u8::try_from(entry.level as usize).expect("Levels must fit in u8"))
                 .bind(module)
                 .bind(filename)
                 .bind(entry.line)
@@ -195,7 +182,7 @@ impl Db for SqliteDb {
         }
 
         let done = query.execute(&self.pool).await.map_err(|e| e.to_string())?;
-        if done.rows_affected() as usize != nentries {
+        if done.rows_affected() != nentries {
             return Err(format!(
                 "Log entries insertion created {} rows but expected {}",
                 done.rows_affected(),

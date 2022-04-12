@@ -23,6 +23,7 @@ use crate::{truncate_option_str, Connection, Db, Result};
 use futures::TryStreamExt;
 use sqlx::postgres::{PgConnectOptions, PgPool};
 use sqlx::Row;
+use std::convert::TryFrom;
 use std::env;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -138,14 +139,6 @@ pub async fn setup_test(opts: ConnectionOptions) -> Connection {
     Connection(Arc::from(PostgresTestDb::setup_test(opts).await))
 }
 
-/// Converts an `u32` from the in-memory model to an `i16` suitable for storage.
-fn u32_to_i16(field: &'static str, unsigned: u32) -> Result<i16> {
-    if unsigned > i16::MAX as u32 {
-        return Err(format!("{} ({}) is too large for i16", field, unsigned));
-    }
-    Ok(unsigned as i16)
-}
-
 /// A database instance backed by a PostgreSQL database.
 #[derive(Clone)]
 struct PostgresDb {
@@ -222,19 +215,12 @@ impl Db for PostgresDb {
     }
 
     async fn put_log_entries(&self, entries: Vec<LogEntry<'_, '_>>) -> Result<()> {
-        let nentries = entries.len();
+        let nentries = u32::try_from(entries.len())
+            .map_err(|e| format!("Cannot insert {} log entries at once: {}", entries.len(), e))?;
         if nentries == 0 {
             return Ok(());
         }
-
-        if nentries > std::u32::MAX as usize {
-            return Err(format!(
-                "Cannot insert {} log entries at once; max is {}",
-                nentries,
-                std::u32::MAX
-            ));
-        }
-        let mut sequence = self.log_sequence.fetch_add(nentries as u32, Ordering::SeqCst);
+        let mut sequence = self.log_sequence.fetch_add(nentries, Ordering::SeqCst);
 
         let mut query_str = self.patch_query(
             "INSERT INTO logs
@@ -268,7 +254,7 @@ impl Db for PostgresDb {
             entry.message.truncate(LOG_ENTRY_MAX_MESSAGE_LENGTH);
 
             let line = match entry.line {
-                Some(n) => Some(u32_to_i16("line", n)?),
+                Some(n) => Some(i16::try_from(n).map_err(|_| "line out of range".to_owned())?),
                 None => None,
             };
 
@@ -276,7 +262,7 @@ impl Db for PostgresDb {
                 .bind(entry.timestamp)
                 .bind(sequence)
                 .bind(entry.hostname)
-                .bind(entry.level as i16)
+                .bind(i16::try_from(entry.level as usize).expect("Levels must fit in u16"))
                 .bind(module)
                 .bind(filename)
                 .bind(line)
@@ -286,7 +272,7 @@ impl Db for PostgresDb {
         }
 
         let done = query.execute(&self.pool).await.map_err(|e| e.to_string())?;
-        if done.rows_affected() as usize != nentries {
+        if done.rows_affected() != u64::from(nentries) {
             return Err(format!(
                 "Log entries insertion created {} rows but expected {}",
                 done.rows_affected(),
