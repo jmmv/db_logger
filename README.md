@@ -49,7 +49,7 @@ binary crates (never from libraries).
             password: "some password".to_owned(),
             ..Default::default()
         });
-        let _handle = db_logger::init(conn);
+        let _handle = db_logger::init(conn).await;
         ```
 
     *   Environment-based configuration:
@@ -58,7 +58,7 @@ binary crates (never from libraries).
         use db_logger::postgres;
         let conn = postgres::connect_lazy(
             postgres::ConnectionOptions::from_env("LOGGER").unwrap());
-        let _handle = db_logger::init(conn);
+        let _handle = db_logger::init(conn).await;
         ```
 
         This will cause your program to recognize variables of the form
@@ -90,7 +90,7 @@ binary crates (never from libraries).
         uri: "file:/path/to/database?mode=rw",
         ..Default::default()
     }).await.unwrap();
-    let _handle = db_logger::init(conn);
+    let _handle = db_logger::init(conn).await;
     ```
 
 1.  Make sure to keep `_handle` alive for the duration of the program in an
