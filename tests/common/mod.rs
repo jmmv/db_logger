@@ -145,7 +145,7 @@ pub(crate) fn do_test_everything(test_name: &str, db: Connection) {
     #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
     async fn run_tests(test_name: &str, db: Connection) {
         env::set_var("RUST_LOG", "trace");
-        let handle = db_logger::init(db);
+        let handle = db_logger::init(db).await;
 
         let mut logs_accumulator = vec![];
 

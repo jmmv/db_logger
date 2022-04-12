@@ -247,7 +247,7 @@ struct DbLogger {
 impl DbLogger {
     /// Creates a new logger backed by `db` that obtains timestamps from `clock` and that sets the
     /// hostname of the entries to `hostname`.
-    fn new(
+    async fn new(
         hostname: String,
         db: Connection,
         clock: Arc<dyn Clock + Send + Sync + 'static>,
@@ -314,13 +314,13 @@ impl Log for DbLogger {
 ///
 /// Logger configuration happens via environment variables and tries to respect the same
 /// variables that `env_logger` recognizes.  Misconfigured variables result in a fatal error.
-pub fn init(db: Connection) -> Handle {
+pub async fn init(db: Connection) -> Handle {
     let max_level = env_rust_log();
 
     let hostname =
         gethostname().into_string().unwrap_or_else(|_e| String::from("invalid-hostname"));
 
-    let logger = DbLogger::new(hostname, db.clone(), Arc::from(SystemClock::default()));
+    let logger = DbLogger::new(hostname, db.clone(), Arc::from(SystemClock::default())).await;
     let handle =
         Handle { db, action_tx: logger.action_tx.clone(), done_rx: logger.done_rx.clone() };
 
@@ -351,7 +351,7 @@ mod tests {
             .unwrap();
         db.create_schema().await.unwrap();
         let clock = Arc::from(MonotonicClock::new(1000));
-        (DbLogger::new("fake-hostname".to_owned(), db.clone(), clock), db)
+        (DbLogger::new("fake-hostname".to_owned(), db.clone(), clock).await, db)
     }
 
     /// Emits one single log entry at every possible level.
