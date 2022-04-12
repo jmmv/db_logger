@@ -9,7 +9,6 @@ description = "A database-backed logger for use with the log crate"
 repository = "https://github.com/jmmv/db_logger"
 readme = "README.md"
 edition = "2018"
-publish = false
 
 [features]
 default = ["postgres", "sqlite"]
