@@ -16,6 +16,8 @@
 //! Collection of clock implementations.
 
 #[cfg(test)]
+use std::convert::TryFrom;
+#[cfg(test)]
 use std::sync::atomic::{AtomicU64, Ordering};
 use time::OffsetDateTime;
 
@@ -60,7 +62,7 @@ impl MonotonicClock {
 impl Clock for MonotonicClock {
     fn now_utc(&self) -> OffsetDateTime {
         let now = self.now.fetch_add(1, Ordering::SeqCst);
-        OffsetDateTime::from_unix_timestamp(now as i64)
+        OffsetDateTime::from_unix_timestamp(i64::try_from(now).expect("Mock timestamp too long"))
     }
 }
 

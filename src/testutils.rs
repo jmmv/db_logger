@@ -20,6 +20,7 @@ use crate::logger::{
     LOG_ENTRY_MAX_MESSAGE_LENGTH, LOG_ENTRY_MAX_MODULE_LENGTH,
 };
 use crate::Db;
+use std::convert::TryFrom;
 use time::OffsetDateTime;
 
 /// Context to parameterize the tests depending on the backing database.
@@ -111,7 +112,7 @@ pub(crate) fn test_log_entries_long_strings(mut context: Box<dyn TestContext>) {
     async fn run(context: &mut dyn TestContext) {
         let mut long_string = String::with_capacity(5000);
         for i in 0..long_string.capacity() {
-            long_string.push((b'0' + ((i % 10) as u8)) as char);
+            long_string.push(char::from(b'0' + u8::try_from(i % 10).unwrap()));
         }
 
         let entry = LogEntry {
