@@ -12,6 +12,8 @@ especially suited to (distributed) services.
 db\_logger currently supports PostgreSQL and SQLite and is backed by the
 [sqlx crate](https://crates.io/crates/sqlx).
 
+**The latest version of db\_logger is 0.1.0 and was released on 2022-04-12.**
+
 # Usage
 
 To use db\_logger, you need to add a dependency to your project with the right
