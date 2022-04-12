@@ -137,24 +137,42 @@ impl Db for SqliteDb {
     }
 
     async fn put_log_entries(&self, entries: Vec<LogEntry<'_, '_>>) -> Result<()> {
-        let _permit = self.sem.clone().acquire_owned().await.expect("Semaphore prematurely closed");
+        let nentries = entries.len();
+        if nentries == 0 {
+            return Ok(());
+        }
 
-        let mut sequence = self.log_sequence.fetch_add(entries.len() as u64, Ordering::SeqCst);
+        if nentries > std::u64::MAX as usize {
+            return Err(format!(
+                "Cannot insert {} log entries at once; max is {}",
+                nentries,
+                std::u64::MAX
+            ));
+        }
+        let mut sequence = self.log_sequence.fetch_add(nentries as u64, Ordering::SeqCst);
 
-        let query_str = "
+        let mut query_str = "
             INSERT INTO logs
                 (timestamp_secs, timestamp_nsecs, sequence, hostname,
                     level, module, filename, line, message)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+            VALUES "
+            .to_owned();
+        let params = ", (?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
-        // Using a transaction is critical for good SQLite write performance.
-        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        query_str.push_str(&params[2..]);
+        for _ in 1..nentries {
+            query_str.push_str(params);
+        }
 
-        // This implementation is not very efficient but it is straightforward, which is
-        // intentional given that this is only used for testing.
+        let _permit = self.sem.clone().acquire_owned().await.expect("Semaphore prematurely closed");
+
+        let mut query = sqlx::query(&query_str);
         for mut entry in entries.into_iter() {
-            // This is not necessary but truncate the contents to match the Azure SQL
+            // This is not necessary but truncate the contents to match the PostgreSQL
             // implementation.
+            //
+            // TODO(jmmv): This does not make sense now that we expose SQLite as a backend that
+            // callers can choose to use.
             let module = truncate_option_str(entry.module, LOG_ENTRY_MAX_MODULE_LENGTH);
             let filename = truncate_option_str(entry.filename, LOG_ENTRY_MAX_FILENAME_LENGTH);
             entry.hostname.truncate(LOG_ENTRY_MAX_HOSTNAME_LENGTH);
@@ -162,7 +180,7 @@ impl Db for SqliteDb {
 
             let (timestamp_secs, timestamp_nsecs) = unpack_timestamp(entry.timestamp);
 
-            let done = sqlx::query(query_str)
+            query = query
                 .bind(timestamp_secs)
                 .bind(timestamp_nsecs)
                 .bind(u64_to_i64("sequence", sequence)?)
@@ -171,18 +189,20 @@ impl Db for SqliteDb {
                 .bind(module)
                 .bind(filename)
                 .bind(entry.line)
-                .bind(entry.message)
-                .execute(&mut tx)
-                .await
-                .map_err(|e| e.to_string())?;
-            if done.rows_affected() != 1 {
-                return Err("Insertion didn't create one row".to_owned());
-            }
+                .bind(entry.message);
 
             sequence += 1;
         }
 
-        tx.commit().await.map_err(|e| e.to_string())
+        let done = query.execute(&self.pool).await.map_err(|e| e.to_string())?;
+        if done.rows_affected() as usize != nentries {
+            return Err(format!(
+                "Log entries insertion created {} rows but expected {}",
+                done.rows_affected(),
+                nentries
+            ));
+        }
+        Ok(())
     }
 }
 
