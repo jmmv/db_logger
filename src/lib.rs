@@ -13,7 +13,9 @@
 // License for the specific language governing permissions and limitations
 // under the License.
 
-//! A database-backed logger for use with the [`log` crate][log-crate-url].
+//! A database-backed logger for use with the [`log` crate][log-crate].
+//!
+//! [log-crate]: https://docs.rs/log
 
 // Keep these in sync with other top-level files.
 #![allow(clippy::await_holding_refcell_ref)]
